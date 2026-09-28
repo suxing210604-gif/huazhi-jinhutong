@@ -1,0 +1,18 @@
+{
+  "name": "花植进货通",
+  "short_name": "花植进货通",
+  "description": "拍照识别智能入库 — 花卉绿植进货管理工具",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f4f3",
+  "theme_color": "#2d7a5f",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
