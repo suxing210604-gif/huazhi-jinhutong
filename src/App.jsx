@@ -951,14 +951,14 @@ export default function App(qoderProps) {
           {/* ── Stat cards ────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6" aria-label="统计概览" data-qoder-id="qel-div-85faf1f5" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-div-85faf1f5&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;div&quot;,&quot;loc&quot;:{&quot;line&quot;:398,&quot;column&quot;:11}}">
             {[
-              { label: '进货总量', value: `${stats.total} 件`, icon: Package, gradient: 'stat-gradient-green', iconColor: 'text-cat-green' },
-              { label: '总采购额', value: `¥${stats.totalCost.toLocaleString()}`, icon: TrendingUp, gradient: 'stat-gradient-blue', iconColor: 'text-cat-blue' },
-              { label: '品类数', value: `${stats.categoryCount} 类`, icon: BarChart3, gradient: 'stat-gradient-amber', iconColor: 'text-cat-amber' },
-              { label: '本周新增', value: `${stats.thisWeek} 件`, icon: ArrowUpRight, gradient: 'stat-gradient-rose', iconColor: 'text-cat-rose' },
+              { label: '进货总量', value: `${stats.total} 件`, icon: Package, gradient: 'stat-gradient-green', iconColor: 'text-cat-green', nav: 'inventory' },
+              { label: '总采购额', value: `¥${stats.totalCost.toLocaleString()}`, icon: TrendingUp, gradient: 'stat-gradient-blue', iconColor: 'text-cat-blue', nav: 'analytics' },
+              { label: '品类数', value: `${stats.categoryCount} 类`, icon: BarChart3, gradient: 'stat-gradient-amber', iconColor: 'text-cat-amber', nav: 'analytics' },
+              { label: '本周新增', value: `${stats.thisWeek} 件`, icon: ArrowUpRight, gradient: 'stat-gradient-rose', iconColor: 'text-cat-rose', nav: 'inventory' },
             ].map((s, i) => {
               const Icon = s.icon
               return (
-                <div key={i} className={`rounded-2xl p-4 sm:p-5 ${s.gradient} fade-in`}
+                <div key={i} onClick={() => setActiveNav(s.nav)} className={`rounded-2xl p-4 sm:p-5 ${s.gradient} fade-in cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-transform`}
                      style={{ animationDelay: `${i * 80}ms` }} data-qoder-id="qel-div-84faf062" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-div-84faf062&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;div&quot;,&quot;loc&quot;:{&quot;line&quot;:407,&quot;column&quot;:17}}">
                   <div className="flex items-start justify-between mb-3" data-qoder-id="qel-flex-49634d49" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-flex-49634d49&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;flex&quot;,&quot;loc&quot;:{&quot;line&quot;:409,&quot;column&quot;:19}}">
                     <div className="w-9 h-9 rounded-xl bg-white/60 flex items-center justify-center" data-qoder-id="qel-w-9-a2f1798c" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-w-9-a2f1798c&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;w-9&quot;,&quot;loc&quot;:{&quot;line&quot;:410,&quot;column&quot;:21}}">
