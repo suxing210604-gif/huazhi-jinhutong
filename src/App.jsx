@@ -3,10 +3,12 @@ import {
   Camera, Upload, Search, Download, Leaf, Flower2, Wine,
   Package, TrendingUp, Trash2, Edit3, ChevronDown, Image as ImageIcon,
   FileSpreadsheet, FileText, Check, X, Sparkles, LayoutDashboard,
-  ClipboardList, Settings, BarChart3, Plus, ArrowUpRight, AlertCircle
+  ClipboardList, Settings, BarChart3, Plus, ArrowUpRight, AlertCircle,
+  Clock, Database
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { recognizeImage, AI_PROVIDERS, fileToBase64 } from './lib/openai-api'
+import { db } from './lib/supabase'
 
 /* ─────────────────────────────────────────────────────────────────────
    Product catalog for AI recognition simulation
@@ -54,12 +56,8 @@ const CATEGORY_COLORS = {
    Main App Component
    ───────────────────────────────────────────────────────────────────── */
 export default function App(qoderProps) {
-  const [items, setItems] = useState(() => {
-    try {
-      const saved = localStorage.getItem('huazhi_items')
-      return saved ? JSON.parse(saved) : []
-    } catch { return [] }
-  })
+  const [items, setItems] = useState([])
+  const [dataLoaded, setDataLoaded] = useState(false)
   const [activeNav, setActiveNav] = useState('inventory')
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('全部')
@@ -85,16 +83,7 @@ export default function App(qoderProps) {
   const [editingNotesId, setEditingNotesId] = useState(null)
   const [inlineNotesValue, setInlineNotesValue] = useState('')
   const fileInputRef = useRef(null)
-  const nextId = useRef((() => {
-    try {
-      const saved = localStorage.getItem('huazhi_items')
-      if (saved) {
-        const arr = JSON.parse(saved)
-        return arr.length ? Math.max(...arr.map(i => i.id)) + 1 : 1
-      }
-    } catch {}
-    return 1
-  })())
+  const nextId = useRef(1)
 
   /* ── Auto-hide toast ──────────────────────────────────────────────── */
   useEffect(() => {
@@ -103,10 +92,17 @@ export default function App(qoderProps) {
     return () => clearTimeout(timer)
   }, [toast])
 
-  /* ── Persist data to localStorage ──────────────────────────────────── */
+  /* ── Load data from cloud database on mount ────────────────────────── */
   useEffect(() => {
-    try { localStorage.setItem('huazhi_items', JSON.stringify(items)) } catch {}
-  }, [items])
+    (async () => {
+      const loaded = await db.loadItems()
+      setItems(loaded)
+      if (loaded.length > 0) {
+        nextId.current = Math.max(...loaded.map(i => i.id)) + 1
+      }
+      setDataLoaded(true)
+    })()
+  }, [])
 
   /* ── Derived data ─────────────────────────────────────────────────── */
   const filteredItems = useMemo(() => {
@@ -175,7 +171,9 @@ export default function App(qoderProps) {
         photo: photoUrl,
         date: new Date().toISOString().split('T')[0],
       }))
-      setItems(prev => [...newItems, ...prev])
+      // 云端保存（自动去重：名称+供应商+日期相同则替换）
+      const updated = await db.upsertBatch(newItems)
+      setItems(updated)
       showToast(`已识别 ${newItems.length} 件商品，请核对信息`, 'success')
     } catch (err) {
       showToast(err.message || '识别失败，请重试', 'error')
@@ -212,8 +210,9 @@ export default function App(qoderProps) {
     showToast('进货数据已确认入库', 'success')
   }, [showToast])
 
-  const removeItem = useCallback((id) => {
-    setItems(prev => prev.filter(i => i.id !== id))
+  const removeItem = useCallback(async (id) => {
+    const updated = await db.deleteItem(id)
+    setItems(updated)
     setSelectedIds(prev => {
       const next = new Set(prev)
       next.delete(id)
@@ -223,8 +222,10 @@ export default function App(qoderProps) {
     showToast('已删除该条记录', 'success')
   }, [showToast])
 
-  const removeSelectedItems = useCallback(() => {
-    setItems(prev => prev.filter(i => !selectedIds.has(i.id)))
+  const removeSelectedItems = useCallback(async () => {
+    const ids = [...selectedIds]
+    const updated = await db.deleteMany(ids)
+    setItems(updated)
     const count = selectedIds.size
     setSelectedIds(new Set())
     setDeleteConfirm(null)
@@ -237,8 +238,9 @@ export default function App(qoderProps) {
     setShowEditModal(true)
   }, [])
 
-  const saveEdit = useCallback(() => {
-    setItems(prev => prev.map(i => i.id === editingItem.id ? { ...editForm } : i))
+  const saveEdit = useCallback(async () => {
+    const updated = await db.updateItem(editingItem.id, editForm)
+    setItems(updated)
     setShowEditModal(false)
     setEditingItem(null)
     showToast('信息已更新', 'success')
@@ -253,7 +255,7 @@ export default function App(qoderProps) {
     setShowAddModal(true)
   }, [])
 
-  const saveAdd = useCallback(() => {
+  const saveAdd = useCallback(async () => {
     if (!addForm.name?.trim()) {
       showToast('请填写商品名称', 'error')
       return
@@ -272,7 +274,9 @@ export default function App(qoderProps) {
       photo: '',
       date: addForm.date || new Date().toISOString().split('T')[0],
     }
-    setItems(prev => [newItem, ...prev])
+    // 云端保存（自动去重：名称+供应商+日期相同则替换）
+    const updated = await db.upsertItem(newItem)
+    setItems(updated)
     setShowAddModal(false)
     showToast('已添加新商品', 'success')
   }, [addForm, showToast])
@@ -381,12 +385,18 @@ export default function App(qoderProps) {
               <Leaf className="w-4 h-4 text-white" aria-hidden="true"  data-qoder-id="qel-w-4-7aad80a3" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-w-4-7aad80a3&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;w-4&quot;,&quot;loc&quot;:{&quot;line&quot;:307,&quot;column&quot;:15}}"/>
             </div>
             <div data-qoder-id="qel-div-8407bac2" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-div-8407bac2&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;div&quot;,&quot;loc&quot;:{&quot;line&quot;:309,&quot;column&quot;:13}}">
-              <h2 className="text-lg font-semibold tracking-tight" data-qoder-id="qel-text-lg-95c8d866" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-lg-95c8d866&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-lg&quot;,&quot;loc&quot;:{&quot;line&quot;:310,&quot;column&quot;:15}}">进货管理</h2>
-              <p className="text-xs text-seed-muted hidden sm:block" data-qoder-id="qel-text-xs-69b0087d" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-xs-69b0087d&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-xs&quot;,&quot;loc&quot;:{&quot;line&quot;:311,&quot;column&quot;:15}}">拍照识别 · 智能录入 · 一键导出</p>
+              <h2 className="text-lg font-semibold tracking-tight" data-qoder-id="qel-text-lg-95c8d866" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-lg-95c8d866&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-lg&quot;,&quot;loc&quot;:{&quot;line&quot;:310,&quot;column&quot;:15}}">
+                {activeNav === 'dashboard' ? '数据概览' : activeNav === 'analytics' ? '统计分析' : activeNav === 'settings' ? '系统设置' : '进货管理'}
+              </h2>
+              <p className="text-xs text-seed-muted hidden sm:block" data-qoder-id="qel-text-xs-69b0087d" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-xs-69b0087d&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-xs&quot;,&quot;loc&quot;:{&quot;line&quot;:311,&quot;column&quot;:15}}">
+                {activeNav === 'dashboard' ? '进货数据总览与关键指标' : activeNav === 'analytics' ? '品类、供应商与价格分析' : activeNav === 'settings' ? 'API 配置与数据管理' : '拍照识别 · 智能录入 · 一键导出'}
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2" data-qoder-id="qel-flex-48520295" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-flex-48520295&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;flex&quot;,&quot;loc&quot;:{&quot;line&quot;:315,&quot;column&quot;:11}}">
+            {activeNav === 'inventory' && (
+              <>
             <button
               onClick={() => exportData('xlsx')}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all hover:shadow-md"
@@ -423,6 +433,8 @@ export default function App(qoderProps) {
               onChange={e => handleFiles(e.target.files)}
               aria-label="选择图片文件"
              data-qoder-id="qel-input-06dc16b2" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-input-06dc16b2&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;input&quot;,&quot;loc&quot;:{&quot;line&quot;:343,&quot;column&quot;:13}}"/>
+              </>
+            )}
             <button
               onClick={() => { setShowSettings(true); setSettingsKeyInput(apiKey); setSettingsProvider(aiProvider) }}
               className="flex items-center justify-center w-9 h-9 rounded-xl transition-all hover:shadow-md"
@@ -436,6 +448,349 @@ export default function App(qoderProps) {
         </header>
 
         <div className="px-5 py-6 max-w-[1400px] mx-auto" data-qoder-id="qel-px-5-7c043022" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-px-5-7c043022&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;px-5&quot;,&quot;loc&quot;:{&quot;line&quot;:355,&quot;column&quot;:9}}">
+
+          {/* ═══════════════════════════════════════════════════════════
+              Dashboard Page
+             ═══════════════════════════════════════════════════════════ */}
+          {activeNav === 'dashboard' && (
+            <div className="fade-in">
+              {/* Summary cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                {[
+                  { label: '进货总量', value: `${stats.total} 件`, icon: Package, gradient: 'stat-gradient-green', iconColor: 'text-cat-green' },
+                  { label: '总采购额', value: `¥${stats.totalCost.toLocaleString()}`, icon: TrendingUp, gradient: 'stat-gradient-blue', iconColor: 'text-cat-blue' },
+                  { label: '品类数', value: `${stats.categoryCount} 类`, icon: BarChart3, gradient: 'stat-gradient-amber', iconColor: 'text-cat-amber' },
+                  { label: '本周新增', value: `${stats.thisWeek} 件`, icon: ArrowUpRight, gradient: 'stat-gradient-rose', iconColor: 'text-cat-rose' },
+                ].map((s, i) => {
+                  const Icon = s.icon
+                  return (
+                    <div key={i} className={`rounded-2xl p-4 sm:p-5 ${s.gradient} fade-in`} style={{ animationDelay: `${i * 80}ms` }}>
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="w-9 h-9 rounded-xl bg-white/60 flex items-center justify-center">
+                          <Icon className={`w-[18px] h-[18px] ${s.iconColor}`} aria-hidden="true"/>
+                        </div>
+                      </div>
+                      <p className="text-[12px] font-medium text-seed-muted mb-1">{s.label}</p>
+                      <p className="text-xl sm:text-2xl font-bold text-seed-fg tabular-nums tracking-tight">{s.value}</p>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Category breakdown */}
+              {items.length > 0 && (
+                <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <BarChart3 className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                    <h3 className="text-sm font-semibold text-seed-fg">分类概览</h3>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {Object.entries(categoryStats).map(([cat, data]) => {
+                      const colors = CATEGORY_COLORS[cat] || { text: 'text-seed-fg', bg: 'bg-neutral-50' }
+                      const CatIcon = CATEGORY_ICONS[cat] || Package
+                      const pct = stats.totalCost > 0 ? Math.round(data.cost / stats.totalCost * 100) : 0
+                      return (
+                        <div key={cat} className={`rounded-xl p-3 ${colors.bg}`}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <CatIcon className={`w-4 h-4 ${colors.text}`} aria-hidden="true"/>
+                            <span className={`text-xs font-medium ${colors.text}`}>{cat}</span>
+                          </div>
+                          <p className="text-lg font-bold text-seed-fg tabular-nums">{data.count} <span className="text-xs font-normal text-seed-muted">件</span></p>
+                          <p className="text-[13px] text-seed-muted tabular-nums">¥{data.cost.toLocaleString()}</p>
+                          <div className="mt-2 h-1.5 rounded-full bg-white/60 overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: 'var(--color-seed-primary)' }} />
+                          </div>
+                          <p className="text-[11px] text-seed-muted mt-1">占比 {pct}%</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Recent items */}
+              {items.length > 0 && (
+                <div className="glass-card-solid rounded-2xl p-4 sm:p-5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Clock className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                    <h3 className="text-sm font-semibold text-seed-fg">最近进货</h3>
+                  </div>
+                  <div className="space-y-2">
+                    {items.slice(0, 5).map(item => (
+                      <div key={item.id} className="flex items-center justify-between py-2 px-3 rounded-xl hover:bg-neutral-50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-cat-green-bg flex items-center justify-center">
+                            <Leaf className="w-4 h-4 text-cat-green" aria-hidden="true"/>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-seed-fg">{item.name}</p>
+                            <p className="text-[11px] text-seed-muted">{item.category} · {item.supplier}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold text-seed-fg tabular-nums">¥{(item.price * item.quantity).toLocaleString()}</p>
+                          <p className="text-[11px] text-seed-muted">{item.quantity} 件 · {item.date}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {items.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-cat-green-bg flex items-center justify-center mb-4">
+                    <Package className="w-8 h-8 text-cat-green" aria-hidden="true"/>
+                  </div>
+                  <p className="text-sm font-medium text-seed-fg mb-1">暂无数据</p>
+                  <p className="text-xs text-seed-muted">切换到「进货管理」开始录入商品</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════
+              Analytics Page
+             ═══════════════════════════════════════════════════════════ */}
+          {activeNav === 'analytics' && (
+            <div className="fade-in">
+              {items.length > 0 ? (
+                <>
+                  {/* Category distribution bar chart */}
+                  <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                    <div className="flex items-center gap-2 mb-5">
+                      <BarChart3 className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                      <h3 className="text-sm font-semibold text-seed-fg">品类金额分布</h3>
+                    </div>
+                    <div className="space-y-4">
+                      {Object.entries(categoryStats)
+                        .sort((a, b) => b[1].cost - a[1].cost)
+                        .map(([cat, data]) => {
+                          const colors = CATEGORY_COLORS[cat] || { text: 'text-seed-fg', bg: 'bg-neutral-50' }
+                          const CatIcon = CATEGORY_ICONS[cat] || Package
+                          const maxCost = Math.max(...Object.values(categoryStats).map(d => d.cost))
+                          const pct = maxCost > 0 ? Math.round(data.cost / maxCost * 100) : 0
+                          return (
+                            <div key={cat}>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <div className="flex items-center gap-2">
+                                  <CatIcon className={`w-4 h-4 ${colors.text}`} aria-hidden="true"/>
+                                  <span className="text-sm font-medium text-seed-fg">{cat}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-sm font-semibold text-seed-fg tabular-nums">¥{data.cost.toLocaleString()}</span>
+                                  <span className="text-xs text-seed-muted ml-2">{data.count} 件</span>
+                                </div>
+                              </div>
+                              <div className="h-2.5 rounded-full bg-neutral-100 overflow-hidden">
+                                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: 'var(--color-seed-primary)' }} />
+                              </div>
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+
+                  {/* Supplier stats */}
+                  <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                    <div className="flex items-center gap-2 mb-5">
+                      <Package className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                      <h3 className="text-sm font-semibold text-seed-fg">供应商统计</h3>
+                    </div>
+                    {(() => {
+                      const supplierMap = {}
+                      items.forEach(i => {
+                        const s = i.supplier || '未知供应商'
+                        if (!supplierMap[s]) supplierMap[s] = { count: 0, cost: 0, items: 0 }
+                        supplierMap[s].count += i.quantity
+                        supplierMap[s].cost += i.price * i.quantity
+                        supplierMap[s].items += 1
+                      })
+                      const sorted = Object.entries(supplierMap).sort((a, b) => b[1].cost - a[1].cost)
+                      return (
+                        <div className="space-y-2">
+                          {sorted.map(([name, data], idx) => (
+                            <div key={name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-neutral-50 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <span className="w-6 h-6 rounded-lg bg-cat-green-bg flex items-center justify-center text-[11px] font-bold text-cat-green">{idx + 1}</span>
+                                <div>
+                                  <p className="text-sm font-medium text-seed-fg">{name}</p>
+                                  <p className="text-[11px] text-seed-muted">{data.items} 种商品 · {data.count} 件</p>
+                                </div>
+                              </div>
+                              <p className="text-sm font-semibold text-seed-fg tabular-nums">¥{data.cost.toLocaleString()}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </div>
+
+                  {/* Price analysis */}
+                  <div className="glass-card-solid rounded-2xl p-4 sm:p-5">
+                    <div className="flex items-center gap-2 mb-5">
+                      <TrendingUp className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                      <h3 className="text-sm font-semibold text-seed-fg">价格分析</h3>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {(() => {
+                        const prices = items.map(i => i.price)
+                        const avg = prices.reduce((a, b) => a + b, 0) / prices.length
+                        const max = Math.max(...prices)
+                        const min = Math.min(...prices)
+                        const totalQty = items.reduce((s, i) => s + i.quantity, 0)
+                        const weightedAvg = stats.totalCost / totalQty
+                        return [
+                          { label: '平均单价', value: `¥${avg.toFixed(0)}` },
+                          { label: '加权均价', value: `¥${weightedAvg.toFixed(0)}` },
+                          { label: '最高单价', value: `¥${max}` },
+                          { label: '最低单价', value: `¥${min}` },
+                        ].map((s, i) => (
+                          <div key={i} className="rounded-xl p-3 bg-neutral-50">
+                            <p className="text-[11px] text-seed-muted mb-1">{s.label}</p>
+                            <p className="text-lg font-bold text-seed-fg tabular-nums">{s.value}</p>
+                          </div>
+                        ))
+                      })()}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-cat-blue-bg flex items-center justify-center mb-4">
+                    <BarChart3 className="w-8 h-8 text-cat-blue" aria-hidden="true"/>
+                  </div>
+                  <p className="text-sm font-medium text-seed-fg mb-1">暂无数据</p>
+                  <p className="text-xs text-seed-muted">录入商品后可查看统计分析</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════
+              Settings Page
+             ═══════════════════════════════════════════════════════════ */}
+          {activeNav === 'settings' && (
+            <div className="fade-in max-w-2xl">
+              {/* AI Configuration */}
+              <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles className="w-4 h-4 text-amber-500" aria-hidden="true"/>
+                  <h3 className="text-sm font-semibold text-seed-fg">AI 识别配置</h3>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-medium text-seed-muted mb-1.5 block">当前服务商</label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={aiProvider}
+                        onChange={e => {
+                          setAiProvider(e.target.value)
+                          try { localStorage.setItem('ai_provider', e.target.value) } catch {}
+                          const savedKey = localStorage.getItem(`ai_api_key_${e.target.value}`) || ''
+                          setApiKey(savedKey)
+                        }}
+                        className="appearance-none pl-3 pr-8 py-2 rounded-xl text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-seed-primary/20"
+                        style={{ background: 'var(--color-neutral-50)', border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}
+                      >
+                        {Object.entries(AI_PROVIDERS).map(([key, p]) => (
+                          <option key={key} value={key}>{p.name}</option>
+                        ))}
+                      </select>
+                      <span className={`text-xs px-2 py-1 rounded-lg ${apiKey ? 'bg-cat-green-bg text-cat-green' : 'bg-neutral-100 text-seed-muted'}`}>
+                        {apiKey ? '已配置' : '未配置'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-seed-muted mb-1.5 block">API Key</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={apiKey}
+                        readOnly
+                        className="flex-1 px-3 py-2 rounded-xl text-sm font-mono focus:outline-none"
+                        style={{ background: 'var(--color-neutral-50)', border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}
+                        placeholder="未设置"
+                      />
+                      <button
+                        onClick={() => { setShowSettings(true); setSettingsKeyInput(apiKey); setSettingsProvider(aiProvider) }}
+                        className="px-4 py-2 rounded-xl text-xs font-medium text-white transition-colors"
+                        style={{ background: 'var(--color-seed-primary)' }}
+                      >
+                        {apiKey ? '修改' : '配置'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data Management */}
+              <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Database className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                  <h3 className="text-sm font-semibold text-seed-fg">数据管理</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium text-seed-fg">本地数据</p>
+                      <p className="text-[11px] text-seed-muted">存储在浏览器 localStorage 中</p>
+                    </div>
+                    <span className="text-sm font-semibold text-seed-fg tabular-nums">{items.length} 条记录</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium text-seed-fg">导出数据</p>
+                      <p className="text-[11px] text-seed-muted">导出为 Excel 或 CSV 文件</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => exportData('xlsx')} className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hover:bg-neutral-100" style={{ border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}>Excel</button>
+                      <button onClick={() => exportData('csv')} className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hover:bg-neutral-100" style={{ border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}>CSV</button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium text-seed-fg">清除数据</p>
+                      <p className="text-[11px] text-seed-muted">删除所有进货记录（含云端）</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (window.confirm('确定要清除所有数据吗？此操作不可恢复。')) {
+                          await db.clearAll()
+                          setItems([])
+                          showToast('数据已清除', 'success')
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-500 transition-colors hover:bg-red-50"
+                      style={{ border: '1px solid var(--color-cat-rose-bg2)' }}
+                    >
+                      清除
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* About */}
+              <div className="glass-card-solid rounded-2xl p-4 sm:p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <AlertCircle className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                  <h3 className="text-sm font-semibold text-seed-fg">关于</h3>
+                </div>
+                <div className="space-y-2 text-xs text-seed-muted leading-relaxed">
+                  <p><span className="font-medium text-seed-fg">花植进货通</span> v1.0</p>
+                  <p>拍照识别 · 智能录入 · 一键导出</p>
+                  <p>数据仅存储在本地浏览器中，不会上传至任何服务器。</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════
+              Inventory Page (default)
+             ═══════════════════════════════════════════════════════════ */}
+          {activeNav === 'inventory' && (
+          <>
           {/* ── Upload zone ───────────────────────────────────────────── */}
           <div
             className={`upload-zone glass-card mb-6 p-4 sm:p-5 ${isDragging ? 'drag-over' : ''} ${isRecognizing ? 'pointer-events-none' : ''}`}
@@ -700,8 +1055,9 @@ export default function App(qoderProps) {
                                 autoFocus
                                 value={inlineNotesValue}
                                 onChange={e => setInlineNotesValue(e.target.value)}
-                                onBlur={() => {
-                                  setItems(prev => prev.map(it => it.id === item.id ? { ...it, notes: inlineNotesValue } : it))
+                                onBlur={async () => {
+                                  const updated = await db.updateItem(item.id, { notes: inlineNotesValue })
+                                  setItems(updated)
                                   setEditingNotesId(null)
                                 }}
                                 onKeyDown={e => {
@@ -760,8 +1116,8 @@ export default function App(qoderProps) {
               </div>
             )}
           </div>
-        </div>
-      </main>
+          </>
+          )}
 
       {/* ── Edit modal ───────────────────────────────────────────────── */}
       {showEditModal && editingItem && (
@@ -972,6 +1328,9 @@ export default function App(qoderProps) {
           </div>
         </div>
       )}
+
+        </div>
+      </main>
 
       {/* ── Settings modal (API Key) ──────────────────────────────────── */}
       {showSettings && (
