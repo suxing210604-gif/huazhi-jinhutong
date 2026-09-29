@@ -340,45 +340,59 @@ export default function App(qoderProps) {
   const exportData = useCallback((format) => {
     const exportItems = filteredItems.map(({ id, photo, ...rest }) => rest)
 
-    /* ── 计算每条记录的总价 & 供应商汇总 ── */
+    /* ── 计算每条记录的总价 & 按供应商分组 ── */
     const rows = exportItems.map(r => ({ ...r, 总价: r.price * r.quantity }))
-    const supplierMap = {}
+    const supplierGroups = {}
     let grandQty = 0, grandCost = 0
     rows.forEach(r => {
       const key = r.supplier || '未标注'
-      if (!supplierMap[key]) supplierMap[key] = { count: 0, cost: 0 }
-      supplierMap[key].count += r.quantity
-      supplierMap[key].cost += r.total
+      if (!supplierGroups[key]) supplierGroups[key] = []
+      supplierGroups[key].push(r)
       grandQty += r.quantity
       grandCost += r.total
     })
 
-    /* ── 构建表格数据 ── */
+    /* ── 主表头 & 数据行 ── */
     const headers = ['名称', '分类', '规格', '单位', '单价', '数量', '总价', '供应商', '产地', '备注', '日期']
     const dataRows = rows.map(r => [r.name, r.category, r.spec || '', r.unit, r.price, r.quantity, r.total, r.supplier || '', r.origin || '', r.notes || '', r.date || ''])
 
-    /* ── 供应商汇总 ── */
-    const summaryStart = dataRows.length + 3 // 空行 + 标题行 + 数据行后
-    const supplierRows = Object.entries(supplierMap)
-      .sort((a, b) => b[1].cost - a[1].cost)
-      .map(([name, s]) => [name, s.count, s.cost])
+    /* ── 供应商明细（含每项价格 + 小计） ── */
+    const sortedSuppliers = Object.entries(supplierGroups).sort((a, b) => {
+      const costA = a[1].reduce((s, r) => s + r.total, 0)
+      const costB = b[1].reduce((s, r) => s + r.total, 0)
+      return costB - costA
+    })
+
+    const supplierDetailRows = []
+    sortedSuppliers.forEach(([name, items]) => {
+      // 供应商标题行
+      supplierDetailRows.push([`▸ ${name}`, '', '', '', '', '', '', '', '', '', ''])
+      // 该供应商的每条记录
+      items.forEach(r => {
+        supplierDetailRows.push(['', r.name, r.spec || '', r.unit, r.price, r.quantity, r.total, '', r.origin || '', r.notes || '', r.date || ''])
+      })
+      // 小计行
+      const subQty = items.reduce((s, r) => s + r.quantity, 0)
+      const subCost = items.reduce((s, r) => s + r.total, 0)
+      supplierDetailRows.push([`  ${name} 小计`, '', '', '', '', subQty, subCost, '', '', '', ''])
+      supplierDetailRows.push([]) // 空行分隔
+    })
 
     /* ── 合并 aoa ── */
     const aoa = [
       headers,
       ...dataRows,
       [], // 空行
-      ['供应商汇总', '数量（件）', '金额（元）'],
-      ...supplierRows,
-      [], // 空行
-      ['总计', grandQty, grandCost],
+      ['═══ 供应商进货明细 ═══'],
+      ...supplierDetailRows,
+      ['总计', '', '', '', '', grandQty, grandCost, '', '', '', ''],
     ]
 
     const ws = XLSX.utils.aoa_to_sheet(aoa)
 
     /* ── 列宽 ── */
     ws['!cols'] = [
-      { wch: 14 }, { wch: 10 }, { wch: 20 }, { wch: 6 },
+      { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 6 },
       { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 16 },
       { wch: 12 }, { wch: 20 }, { wch: 12 },
     ]
@@ -386,7 +400,7 @@ export default function App(qoderProps) {
     /* ── 合并总计行单元格 ── */
     const totalRowIdx = aoa.length - 1
     ws['!merges'] = [
-      { s: { r: totalRowIdx, c: 2 }, e: { r: totalRowIdx, c: 6 } },
+      { s: { r: totalRowIdx, c: 1 }, e: { r: totalRowIdx, c: 4 } },
     ]
 
     const wb = XLSX.utils.book_new()
