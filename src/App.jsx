@@ -211,12 +211,14 @@ export default function App(qoderProps) {
   /* ── CRUD operations ──────────────────────────────────────────────── */
   const confirmItems = useCallback(async () => {
     if (pendingItems.length === 0) return
+    const count = pendingItems.length
     // 批量入库（自动去重：名称相同则替换）
-    const updated = await db.upsertBatch(pendingItems)
-    setItems(updated)
+    await db.upsertBatch(pendingItems)
+    // 入库完成，清空待确认清单和显示列表
     setPendingItems([])
+    setItems([])
     setSelectedIds(new Set())
-    showToast(`${pendingItems.length} 件商品已确认入库`, 'success')
+    showToast(`${count} 件商品已确认入库`, 'success')
   }, [pendingItems, showToast])
 
   const removeItem = useCallback(async (id) => {
