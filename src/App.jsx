@@ -85,6 +85,7 @@ export default function App(qoderProps) {
   const [inlineNotesValue, setInlineNotesValue] = useState('')
   const [selectedSupplier, setSelectedSupplier] = useState(null)
   const [photoViewer, setPhotoViewer] = useState(null)
+  const [chartTooltip, setChartTooltip] = useState(null)
   const fileInputRef = useRef(null)
   const nextId = useRef(1)
 
@@ -619,7 +620,7 @@ export default function App(qoderProps) {
                 )
               })()}
 
-              {/* ── 本周新增明细 ── */}
+              {/* ── 本周新增明细（双轴折线图） ── */}
               {items.length > 0 && (() => {
                 const days = []
                 for (let d = 6; d >= 0; d--) {
@@ -627,36 +628,164 @@ export default function App(qoderProps) {
                   date.setDate(date.getDate() - d)
                   const key = date.toISOString().slice(0, 10)
                   const label = `${date.getMonth() + 1}/${date.getDate()}`
+                  const weekday = ['日', '一', '二', '三', '四', '五', '六'][date.getDay()]
                   const dayItems = items.filter(i => i.date && i.date.slice(0, 10) === key)
-                  days.push({ key, label, count: dayItems.length, qty: dayItems.reduce((s, i) => s + i.quantity, 0) })
+                  days.push({ key, label, weekday, count: dayItems.length, qty: dayItems.reduce((s, i) => s + i.quantity, 0) })
                 }
-                const maxCount = Math.max(...days.map(d => d.qty), 1)
                 const totalWeekQty = days.reduce((s, d) => s + d.qty, 0)
+                const avgQty = Math.round(totalWeekQty / 7 * 10) / 10
+                const maxQty = Math.max(...days.map(d => d.qty), 1)
+                // cumulative
+                let cum = 0
+                const cumData = days.map(d => { cum += d.qty; return cum })
+                const maxCum = Math.max(...cumData, 1)
+
+                // SVG chart dimensions
+                const W = 600, H = 220
+                const pad = { top: 16, right: 50, bottom: 32, left: 44 }
+                const chartW = W - pad.left - pad.right
+                const chartH = H - pad.top - pad.bottom
+
+                const xStep = chartW / (days.length - 1 || 1)
+                const xPos = (i) => pad.left + i * xStep
+                const yLeft = (v) => pad.top + chartH - (v / maxQty) * chartH
+                const yRight = (v) => pad.top + chartH - (v / maxCum) * chartH
+
+                const linePath = (data, yFn) =>
+                  data.map((v, i) => `${i === 0 ? 'M' : 'L'}${xPos(i).toFixed(1)},${yFn(v).toFixed(1)}`).join(' ')
+
+                const areaPath = (data, yFn) =>
+                  linePath(data, yFn) + ` L${xPos(data.length - 1).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${xPos(0).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`
+
+                // grid lines (left axis)
+                const gridLines = [0, 0.25, 0.5, 0.75, 1].map(r => ({
+                  y: pad.top + chartH * (1 - r),
+                  label: Math.round(maxQty * r),
+                }))
+                const gridLinesRight = [0, 0.25, 0.5, 0.75, 1].map(r => ({
+                  y: pad.top + chartH * (1 - r),
+                  label: Math.round(maxCum * r),
+                }))
+
                 return (
                   <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <ArrowUpRight className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
-                        <h3 className="text-sm font-semibold text-seed-fg">本周新增明细</h3>
+                    {/* Header metrics */}
+                    <div className="flex items-start justify-between mb-1">
+                      <div>
+                        <h3 className="text-base font-bold text-seed-fg">本周新增明细</h3>
+                        <p className="text-[11px] text-seed-muted mt-0.5">近 7 天每日新增件数与累计趋势</p>
                       </div>
-                      <span className="text-xs text-seed-muted">7 天共新增 <strong className="text-seed-fg">{totalWeekQty} 件</strong></span>
                     </div>
-                    <div className="flex items-end gap-2 h-28">
-                      {days.map((d, idx) => {
-                        const pct = d.qty / maxCount * 100
-                        const isToday = idx === days.length - 1
-                        return (
-                          <div key={d.key} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
-                            <span className="text-[10px] text-seed-muted tabular-nums">{d.qty > 0 ? `${d.qty}件` : ''}</span>
-                            <div className="w-full rounded-t-lg transition-all duration-500" style={{
-                              height: `${Math.max(pct, d.qty > 0 ? 10 : 2)}%`,
-                              background: isToday ? 'var(--color-seed-accent, #e8915a)' : `color-mix(in srgb, var(--color-seed-accent, #e8915a) ${35 + idx * 9}%, transparent)`,
-                              opacity: d.qty > 0 ? 1 : 0.15,
-                            }} />
-                            <span className={`text-[10px] ${isToday ? 'font-semibold text-seed-fg' : 'text-seed-muted'}`}>{d.label}</span>
-                          </div>
-                        )
-                      })}
+                    <div className="flex items-baseline gap-8 mb-4 mt-3">
+                      <div>
+                        <p className="text-[12px] text-seed-muted mb-0.5">本周新增（件）</p>
+                        <p className="text-2xl font-bold text-seed-fg tabular-nums">{totalWeekQty}</p>
+                        <p className="text-[11px] text-seed-muted mt-0.5">期初 0</p>
+                      </div>
+                      <div>
+                        <p className="text-[12px] text-seed-muted mb-0.5">日均新增</p>
+                        <p className="text-2xl font-bold text-seed-fg tabular-nums">{avgQty}</p>
+                        <p className="text-[11px] text-seed-muted mt-0.5">峰值 {Math.max(...days.map(d => d.qty))} 件</p>
+                      </div>
+                    </div>
+
+                    {/* SVG Chart */}
+                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: 'visible' }}>
+                      {/* Grid lines */}
+                      {gridLines.map((g, i) => (
+                        <g key={i}>
+                          <line x1={pad.left} y1={g.y} x2={W - pad.right} y2={g.y} stroke="var(--color-seed-border)" strokeWidth="0.8" strokeDasharray="4 3" opacity="0.5" />
+                          <text x={pad.left - 6} y={g.y + 3} textAnchor="end" fontSize="10" fill="var(--color-seed-muted)">{g.label}</text>
+                        </g>
+                      ))}
+                      {/* Right axis labels */}
+                      {gridLinesRight.map((g, i) => (
+                        <text key={i} x={W - pad.right + 6} y={g.y + 3} fontSize="10" fill="var(--color-seed-muted)" opacity="0.7">{g.label}</text>
+                      ))}
+
+                      {/* Area fill - cumulative */}
+                      <path d={areaPath(cumData, yRight)} fill="url(#cumGrad)" opacity="0.15" />
+                      {/* Area fill - daily */}
+                      <path d={areaPath(days.map(d => d.qty), yLeft)} fill="url(#dailyGrad)" opacity="0.12" />
+
+                      {/* Cumulative line (green) */}
+                      <path d={linePath(cumData, yRight)} fill="none" stroke="#34a853" strokeWidth="2.2" strokeLinejoin="round" />
+                      {/* Daily line (blue) */}
+                      <path d={linePath(days.map(d => d.qty), yLeft)} fill="none" stroke="#4285f4" strokeWidth="2.2" strokeLinejoin="round" />
+
+                      {/* Data points - daily */}
+                      {days.map((d, i) => (
+                        <circle key={`d${i}`} cx={xPos(i)} cy={yLeft(d.qty)} r="3.5" fill="#4285f4" stroke="#fff" strokeWidth="1.5" />
+                      ))}
+                      {/* Data points - cumulative */}
+                      {cumData.map((v, i) => (
+                        <circle key={`c${i}`} cx={xPos(i)} cy={yRight(v)} r="3.5" fill="#34a853" stroke="#fff" strokeWidth="1.5" />
+                      ))}
+
+                      {/* X-axis labels */}
+                      {days.map((d, i) => (
+                        <text key={d.key} x={xPos(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--color-seed-muted)">
+                          {d.label}
+                        </text>
+                      ))}
+
+                      {/* Gradient defs */}
+                      <defs>
+                        <linearGradient id="dailyGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#4285f4" />
+                          <stop offset="100%" stopColor="#4285f4" stopOpacity="0" />
+                        </linearGradient>
+                        <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#34a853" />
+                          <stop offset="100%" stopColor="#34a853" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Hover hit areas + tooltip trigger */}
+                      {days.map((d, i) => (
+                        <g key={`hit${i}`}>
+                          <line x1={xPos(i)} y1={pad.top} x2={xPos(i)} y2={pad.top + chartH} stroke="transparent" strokeWidth="20"
+                            onMouseEnter={(e) => setChartTooltip({ x: xPos(i), y: yLeft(d.qty), idx: i, daily: d.qty, cum: cumData[i], label: d.label, weekday: d.weekday })}
+                            onMouseLeave={() => setChartTooltip(null)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        </g>
+                      ))}
+
+                      {/* Tooltip vertical line */}
+                      {chartTooltip && (
+                        <line x1={chartTooltip.x} y1={pad.top} x2={chartTooltip.x} y2={pad.top + chartH} stroke="var(--color-seed-fg)" strokeWidth="0.8" strokeDasharray="3 2" opacity="0.4" />
+                      )}
+                    </svg>
+
+                    {/* Tooltip */}
+                    {chartTooltip && (
+                      <div className="absolute mt-1 px-3 py-2 rounded-lg bg-white shadow-lg border border-neutral-100 text-xs pointer-events-none"
+                        style={{ left: `${(chartTooltip.x / W) * 100}%`, transform: 'translateX(-50%)' }}>
+                        <p className="font-medium text-seed-fg mb-1">{chartTooltip.label} 周{chartTooltip.weekday}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-[#4285f4]" />
+                          <span className="text-seed-muted">当日新增</span>
+                          <span className="font-semibold text-seed-fg ml-auto">{chartTooltip.daily} 件</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="w-2 h-2 rounded-full bg-[#34a853]" />
+                          <span className="text-seed-muted">累计新增</span>
+                          <span className="font-semibold text-seed-fg ml-auto">{chartTooltip.cum} 件</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Legend */}
+                    <div className="flex items-center justify-end gap-5 mt-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-4 h-[2px] rounded bg-[#4285f4]" />
+                        <span className="text-[11px] text-seed-muted">当日新增</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-4 h-[2px] rounded bg-[#34a853]" />
+                        <span className="text-[11px] text-seed-muted">累计趋势</span>
+                      </div>
                     </div>
                   </div>
                 )
