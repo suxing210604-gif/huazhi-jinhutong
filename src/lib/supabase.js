@@ -89,9 +89,7 @@ const localDB = {
   },
   async upsert(item) {
     const all = await this.getAll()
-    const idx = all.findIndex(i =>
-      i.name === item.name && i.supplier === item.supplier && i.date === item.date
-    )
+    const idx = all.findIndex(i => i.name === item.name)
     if (idx >= 0) {
       all[idx] = { ...all[idx], ...item }
     } else {
@@ -144,7 +142,7 @@ export const db = {
   },
 
   /**
-   * 新增或替换：按 名称+供应商+日期 判断重复
+   * 新增或替换：按 名称 判断重复
    * - 重复 → 替换旧记录（更新）
    * - 不重复 → 新增
    * 返回更新后的完整列表
@@ -152,13 +150,11 @@ export const db = {
   async upsertItem(item) {
     if (!supabase) return localDB.upsert(item)
 
-    // 检查是否已存在相同 名称+供应商+日期 的记录
+    // 检查是否已存在相同名称的记录
     const { data: existing } = await supabase
       .from('huazhi_items')
       .select('id')
       .eq('name', item.name || '')
-      .eq('supplier', item.supplier || '')
-      .eq('date', item.date || '')
       .limit(1)
 
     if (existing && existing.length > 0) {
@@ -185,9 +181,7 @@ export const db = {
     if (!supabase) {
       let all = await localDB.getAll()
       for (const item of newItems) {
-        const idx = all.findIndex(i =>
-          i.name === item.name && i.supplier === item.supplier && i.date === item.date
-        )
+        const idx = all.findIndex(i => i.name === item.name)
         if (idx >= 0) {
           all[idx] = { ...all[idx], ...item }
         } else {
@@ -204,8 +198,6 @@ export const db = {
         .from('huazhi_items')
         .select('id')
         .eq('name', item.name || '')
-        .eq('supplier', item.supplier || '')
-        .eq('date', item.date || '')
         .limit(1)
 
       if (existing && existing.length > 0) {
