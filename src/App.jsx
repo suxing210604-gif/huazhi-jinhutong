@@ -4,7 +4,7 @@ import {
   Package, TrendingUp, Trash2, Edit3, ChevronDown, ChevronLeft, ChevronRight,
   Image as ImageIcon, FileSpreadsheet, FileText, Check, X, Sparkles,
   LayoutDashboard, ClipboardList, Settings, BarChart3, Plus, ArrowUpRight,
-  AlertCircle, Clock, Database
+  AlertCircle, Clock, Database, Truck
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { recognizeImage, AI_PROVIDERS, fileToBase64 } from './lib/openai-api'
@@ -36,7 +36,7 @@ const PRODUCT_CATALOG = [
   { name: '散尾葵', category: '绿植', unit: '盆', price: 95, spec: '高70cm, 多枝丛生', supplier: '海南热带花木', origin: '海南海口', notes: '天然加湿器，适合卧室' },
 ]
 
-const CATEGORIES = ['全部', '绿植', '花卉', '玻璃器皿', '花盆']
+const CATEGORIES = ['全部', '绿植', '花卉', '玻璃器皿', '花盆', '运费']
 const NAV_ITEMS = [
   { id: 'dashboard', label: '数据概览', icon: LayoutDashboard },
   { id: 'inventory', label: '进货管理', icon: ClipboardList },
@@ -44,12 +44,13 @@ const NAV_ITEMS = [
   { id: 'settings', label: '系统设置', icon: Settings },
 ]
 
-const CATEGORY_ICONS = { '绿植': Leaf, '花卉': Flower2, '玻璃器皿': Wine, '花盆': Package }
+const CATEGORY_ICONS = { '绿植': Leaf, '花卉': Flower2, '玻璃器皿': Wine, '花盆': Package, '运费': Truck }
 const CATEGORY_COLORS = {
   '绿植': { text: 'text-cat-green', bg: 'bg-cat-green-bg' },
   '花卉': { text: 'text-cat-rose', bg: 'bg-cat-rose-bg' },
   '玻璃器皿': { text: 'text-cat-blue', bg: 'bg-cat-blue-bg' },
   '花盆': { text: 'text-cat-amber', bg: 'bg-cat-amber-bg' },
+  '运费': { text: 'text-cat-slate', bg: 'bg-cat-slate-bg' },
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ export default function App(qoderProps) {
       const newItems = recognized.map(p => ({
         id: nextId.current++,
         name: p.name || '未知商品',
-        category: ['绿植', '花卉', '玻璃器皿', '花盆'].includes(p.category) ? p.category : '绿植',
+        category: ['绿植', '花卉', '玻璃器皿', '花盆', '运费'].includes(p.category) ? p.category : '绿植',
         spec: p.spec || '',
         unit: p.unit || '个',
         price: Number(p.price) || 0,
