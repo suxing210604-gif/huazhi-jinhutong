@@ -493,14 +493,14 @@ export default function App(qoderProps) {
               {/* Summary cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
                 {[
-                  { label: '进货总量', value: `${stats.total} 件`, icon: Package, gradient: 'stat-gradient-green', iconColor: 'text-cat-green' },
-                  { label: '总采购额', value: `¥${stats.totalCost.toLocaleString()}`, icon: TrendingUp, gradient: 'stat-gradient-blue', iconColor: 'text-cat-blue' },
-                  { label: '品类数', value: `${stats.categoryCount} 类`, icon: BarChart3, gradient: 'stat-gradient-amber', iconColor: 'text-cat-amber' },
-                  { label: '本周新增', value: `${stats.thisWeek} 件`, icon: ArrowUpRight, gradient: 'stat-gradient-rose', iconColor: 'text-cat-rose' },
+                  { label: '进货总量', value: `${stats.total} 件`, icon: Package, gradient: 'stat-gradient-green', iconColor: 'text-cat-green', nav: 'inventory' },
+                  { label: '总采购额', value: `¥${stats.totalCost.toLocaleString()}`, icon: TrendingUp, gradient: 'stat-gradient-blue', iconColor: 'text-cat-blue', nav: 'analytics' },
+                  { label: '品类数', value: `${stats.categoryCount} 类`, icon: BarChart3, gradient: 'stat-gradient-amber', iconColor: 'text-cat-amber', nav: 'analytics' },
+                  { label: '本周新增', value: `${stats.thisWeek} 件`, icon: ArrowUpRight, gradient: 'stat-gradient-rose', iconColor: 'text-cat-rose', nav: 'inventory' },
                 ].map((s, i) => {
                   const Icon = s.icon
                   return (
-                    <div key={i} className={`rounded-2xl p-4 sm:p-5 ${s.gradient} fade-in`} style={{ animationDelay: `${i * 80}ms` }}>
+                    <div key={i} onClick={() => setActiveNav(s.nav)} className={`rounded-2xl p-4 sm:p-5 ${s.gradient} fade-in cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-transform`} style={{ animationDelay: `${i * 80}ms` }}>
                       <div className="flex items-start justify-between mb-3">
                         <div className="w-9 h-9 rounded-xl bg-white/60 flex items-center justify-center">
                           <Icon className={`w-[18px] h-[18px] ${s.iconColor}`} aria-hidden="true"/>
@@ -526,7 +526,7 @@ export default function App(qoderProps) {
                       const CatIcon = CATEGORY_ICONS[cat] || Package
                       const pct = stats.totalCost > 0 ? Math.round(data.cost / stats.totalCost * 100) : 0
                       return (
-                        <div key={cat} className={`rounded-xl p-3 ${colors.bg}`}>
+                        <div key={cat} onClick={() => { setCategoryFilter(cat); setActiveNav('inventory') }} className={`rounded-xl p-3 ${colors.bg} cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-transform`}>
                           <div className="flex items-center gap-2 mb-2">
                             <CatIcon className={`w-4 h-4 ${colors.text}`} aria-hidden="true"/>
                             <span className={`text-xs font-medium ${colors.text}`}>{cat}</span>
@@ -553,7 +553,7 @@ export default function App(qoderProps) {
                   </div>
                   <div className="space-y-2">
                     {items.slice(0, 5).map(item => (
-                      <div key={item.id} className="flex items-center justify-between py-2 px-3 rounded-xl hover:bg-neutral-50 transition-colors">
+                      <div key={item.id} onClick={() => { setActiveNav('inventory'); startEdit(item) }} className="flex items-center justify-between py-2 px-3 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg bg-cat-green-bg flex items-center justify-center">
                             <Leaf className="w-4 h-4 text-cat-green" aria-hidden="true"/>
