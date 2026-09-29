@@ -218,14 +218,10 @@ export default function App(qoderProps) {
     const count = pendingItems.length
     // 批量入库（自动去重：名称相同则替换）
     await db.upsertBatch(pendingItems)
-    // 清空待确认清单，重新加载完整进货列表
+    // 入库完成，清空待确认清单和显示列表（数据已存入数据库，不会丢失）
     setPendingItems([])
+    setItems([])
     setSelectedIds(new Set())
-    const loaded = await db.loadItems()
-    setItems(loaded)
-    if (loaded.length > 0) {
-      nextId.current = Math.max(...loaded.map(i => i.id)) + 1
-    }
     showToast(`${count} 件商品已确认入库`, 'success')
   }, [pendingItems, showToast])
 
