@@ -339,23 +339,73 @@ export default function App(qoderProps) {
   /* ── Export ────────────────────────────────────────────────────────── */
   const exportData = useCallback((format) => {
     const exportItems = filteredItems.map(({ id, photo, ...rest }) => rest)
-    const ws = XLSX.utils.json_to_sheet(exportItems)
+
+    /* ── 计算每条记录的总价 & 供应商汇总 ── */
+    const rows = exportItems.map(r => ({ ...r, 总价: r.price * r.quantity }))
+    const supplierMap = {}
+    let grandQty = 0, grandCost = 0
+    rows.forEach(r => {
+      const key = r.supplier || '未标注'
+      if (!supplierMap[key]) supplierMap[key] = { count: 0, cost: 0 }
+      supplierMap[key].count += r.quantity
+      supplierMap[key].cost += r.total
+      grandQty += r.quantity
+      grandCost += r.total
+    })
+
+    /* ── 构建表格数据 ── */
+    const headers = ['名称', '分类', '规格', '单位', '单价', '数量', '总价', '供应商', '产地', '备注', '日期']
+    const dataRows = rows.map(r => [r.name, r.category, r.spec || '', r.unit, r.price, r.quantity, r.total, r.supplier || '', r.origin || '', r.notes || '', r.date || ''])
+
+    /* ── 供应商汇总 ── */
+    const summaryStart = dataRows.length + 3 // 空行 + 标题行 + 数据行后
+    const supplierRows = Object.entries(supplierMap)
+      .sort((a, b) => b[1].cost - a[1].cost)
+      .map(([name, s]) => [name, s.count, s.cost])
+
+    /* ── 合并 aoa ── */
+    const aoa = [
+      headers,
+      ...dataRows,
+      [], // 空行
+      ['供应商汇总', '数量（件）', '金额（元）'],
+      ...supplierRows,
+      [], // 空行
+      ['总计', grandQty, grandCost],
+    ]
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+
+    /* ── 列宽 ── */
+    ws['!cols'] = [
+      { wch: 14 }, { wch: 10 }, { wch: 20 }, { wch: 6 },
+      { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 16 },
+      { wch: 12 }, { wch: 20 }, { wch: 12 },
+    ]
+
+    /* ── 合并总计行单元格 ── */
+    const totalRowIdx = aoa.length - 1
+    ws['!merges'] = [
+      { s: { r: totalRowIdx, c: 2 }, e: { r: totalRowIdx, c: 6 } },
+    ]
+
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '进货数据')
 
+    const dateStr = new Date().toISOString().split('T')[0]
     if (format === 'xlsx') {
-      XLSX.writeFile(wb, `进货记录_${new Date().toISOString().split('T')[0]}.xlsx`)
+      XLSX.writeFile(wb, `进货记录_${dateStr}.xlsx`)
     } else {
       const csvContent = XLSX.utils.sheet_to_csv(ws)
       const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `进货记录_${new Date().toISOString().split('T')[0]}.csv`
+      a.download = `进货记录_${dateStr}.csv`
       a.click()
       URL.revokeObjectURL(url)
     }
-    showToast(`已导出 ${filteredItems.length} 条记录`, 'success')
+    showToast(`已导出 ${filteredItems.length} 条记录，总计 ¥${grandCost.toLocaleString()}`, 'success')
   }, [filteredItems, showToast])
 
   /* ────────────────────────────────────────────────────────────────────
