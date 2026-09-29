@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import {
   Camera, Upload, Search, Download, Leaf, Flower2, Wine,
-  Package, TrendingUp, Trash2, Edit3, ChevronDown, Image as ImageIcon,
-  FileSpreadsheet, FileText, Check, X, Sparkles, LayoutDashboard,
-  ClipboardList, Settings, BarChart3, Plus, ArrowUpRight, AlertCircle,
-  Clock, Database
+  Package, TrendingUp, Trash2, Edit3, ChevronDown, ChevronLeft, ChevronRight,
+  Image as ImageIcon, FileSpreadsheet, FileText, Check, X, Sparkles,
+  LayoutDashboard, ClipboardList, Settings, BarChart3, Plus, ArrowUpRight,
+  AlertCircle, Clock, Database
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { recognizeImage, AI_PROVIDERS, fileToBase64 } from './lib/openai-api'
@@ -83,6 +83,8 @@ export default function App(qoderProps) {
   const [addForm, setAddForm] = useState({})
   const [editingNotesId, setEditingNotesId] = useState(null)
   const [inlineNotesValue, setInlineNotesValue] = useState('')
+  const [selectedSupplier, setSelectedSupplier] = useState(null)
+  const [photoViewer, setPhotoViewer] = useState(null)
   const fileInputRef = useRef(null)
   const nextId = useRef(1)
 
@@ -628,36 +630,116 @@ export default function App(qoderProps) {
                   {/* Supplier stats */}
                   <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
                     <div className="flex items-center gap-2 mb-5">
-                      <Package className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
-                      <h3 className="text-sm font-semibold text-seed-fg">供应商统计</h3>
+                      {selectedSupplier ? (
+                        <button onClick={() => setSelectedSupplier(null)} className="flex items-center gap-1.5 text-seed-muted hover:text-seed-fg transition-colors">
+                          <ChevronLeft className="w-4 h-4" />
+                          <span className="text-sm">返回</span>
+                        </button>
+                      ) : (
+                        <Package className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                      )}
+                      <h3 className="text-sm font-semibold text-seed-fg">
+                        {selectedSupplier ? `${selectedSupplier} 进货明细` : '供应商统计'}
+                      </h3>
                     </div>
-                    {(() => {
-                      const supplierMap = {}
-                      items.forEach(i => {
-                        const s = i.supplier || '未知供应商'
-                        if (!supplierMap[s]) supplierMap[s] = { count: 0, cost: 0, items: 0 }
-                        supplierMap[s].count += i.quantity
-                        supplierMap[s].cost += i.price * i.quantity
-                        supplierMap[s].items += 1
-                      })
-                      const sorted = Object.entries(supplierMap).sort((a, b) => b[1].cost - a[1].cost)
-                      return (
-                        <div className="space-y-2">
-                          {sorted.map(([name, data], idx) => (
-                            <div key={name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-neutral-50 transition-colors">
-                              <div className="flex items-center gap-3">
-                                <span className="w-6 h-6 rounded-lg bg-cat-green-bg flex items-center justify-center text-[11px] font-bold text-cat-green">{idx + 1}</span>
-                                <div>
-                                  <p className="text-sm font-medium text-seed-fg">{name}</p>
-                                  <p className="text-[11px] text-seed-muted">{data.items} 种商品 · {data.count} 件</p>
-                                </div>
-                              </div>
-                              <p className="text-sm font-semibold text-seed-fg tabular-nums">¥{data.cost.toLocaleString()}</p>
+
+                    {selectedSupplier ? (
+                      /* ── Supplier detail view ── */
+                      (() => {
+                        const supplierItems = items.filter(i => (i.supplier || '未知供应商') === selectedSupplier)
+                        const totalCost = supplierItems.reduce((s, i) => s + i.price * i.quantity, 0)
+                        // Group by photo to show original invoices
+                        const photoGroups = {}
+                        supplierItems.forEach(i => {
+                          const key = i.photo || 'no-photo'
+                          if (!photoGroups[key]) photoGroups[key] = { photo: i.photo, items: [] }
+                          photoGroups[key].items.push(i)
+                        })
+                        return (
+                          <div>
+                            {/* Summary */}
+                            <div className="flex items-center justify-between mb-4 px-3 py-2.5 rounded-xl" style={{ background: 'var(--color-seed-primary-bg)' }}>
+                              <span className="text-sm text-seed-fg">共 <strong>{supplierItems.length}</strong> 种商品</span>
+                              <span className="text-sm font-semibold tabular-nums" style={{ color: 'var(--color-seed-primary)' }}>合计 ¥{totalCost.toLocaleString()}</span>
                             </div>
-                          ))}
-                        </div>
-                      )
-                    })()}
+
+                            {/* Items list with photos */}
+                            <div className="space-y-4">
+                              {Object.entries(photoGroups).map(([key, group], gi) => (
+                                <div key={key}>
+                                  {/* Photo header */}
+                                  {group.photo && (
+                                    <div className="mb-2">
+                                      <div
+                                        onClick={() => setPhotoViewer(group.photo)}
+                                        className="relative rounded-xl overflow-hidden cursor-pointer group"
+                                        style={{ border: '1px solid var(--color-seed-border)' }}
+                                      >
+                                        <img src={group.photo} alt="进货单照片" className="w-full h-40 object-cover" />
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                                          <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-medium bg-black/50 px-3 py-1.5 rounded-lg">查看原图</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* Items under this photo */}
+                                  <div className="space-y-1.5">
+                                    {group.items.map(item => (
+                                      <div key={item.id} className="flex items-center justify-between py-2 px-3 rounded-xl bg-neutral-50/60">
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-medium text-seed-fg truncate">{item.name}</p>
+                                          <p className="text-[11px] text-seed-muted">{item.spec} · {item.date}</p>
+                                        </div>
+                                        <div className="text-right flex-shrink-0 ml-3">
+                                          <p className="text-sm font-semibold text-seed-fg tabular-nums">¥{(item.price * item.quantity).toLocaleString()}</p>
+                                          <p className="text-[11px] text-seed-muted tabular-nums">¥{item.price} × {item.quantity}</p>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })()
+                    ) : (
+                      /* ── Supplier list view ── */
+                      (() => {
+                        const supplierMap = {}
+                        items.forEach(i => {
+                          const s = i.supplier || '未知供应商'
+                          if (!supplierMap[s]) supplierMap[s] = { count: 0, cost: 0, items: 0 }
+                          supplierMap[s].count += i.quantity
+                          supplierMap[s].cost += i.price * i.quantity
+                          supplierMap[s].items += 1
+                        })
+                        const sorted = Object.entries(supplierMap).sort((a, b) => b[1].cost - a[1].cost)
+                        return (
+                          <div className="space-y-2">
+                            {sorted.map(([name, data], idx) => (
+                              <button
+                                key={name}
+                                onClick={() => setSelectedSupplier(name)}
+                                className="w-full flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-neutral-50 transition-colors text-left cursor-pointer"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="w-6 h-6 rounded-lg bg-cat-green-bg flex items-center justify-center text-[11px] font-bold text-cat-green">{idx + 1}</span>
+                                  <div>
+                                    <p className="text-sm font-medium text-seed-fg">{name}</p>
+                                    <p className="text-[11px] text-seed-muted">{data.items} 种商品 · {data.count} 件</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-semibold text-seed-fg tabular-nums">¥{data.cost.toLocaleString()}</p>
+                                  <ChevronRight className="w-4 h-4 text-seed-muted" />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      })()
+                    )}
                   </div>
 
                   {/* Price analysis */}
@@ -1481,6 +1563,27 @@ export default function App(qoderProps) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── 照片查看器 ── */}
+      {photoViewer && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setPhotoViewer(null)}
+        >
+          <button
+            onClick={() => setPhotoViewer(null)}
+            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 flex items-center justify-center text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={photoViewer}
+            alt="进货照片"
+            className="max-w-[90vw] max-h-[85vh] object-contain rounded-2xl shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
