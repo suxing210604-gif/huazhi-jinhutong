@@ -573,6 +573,95 @@ export default function App(qoderProps) {
                 </div>
               )}
 
+              {/* ── 采购金额趋势（近 7 天） ── */}
+              {items.length > 0 && (() => {
+                const days = []
+                for (let d = 6; d >= 0; d--) {
+                  const date = new Date()
+                  date.setDate(date.getDate() - d)
+                  const key = date.toISOString().slice(0, 10)
+                  const label = `${date.getMonth() + 1}/${date.getDate()}`
+                  const weekday = ['日', '一', '二', '三', '四', '五', '六'][date.getDay()]
+                  const dayItems = items.filter(i => i.date && i.date.slice(0, 10) === key)
+                  const cost = dayItems.reduce((s, i) => s + i.price * i.quantity, 0)
+                  days.push({ key, label, weekday, cost, count: dayItems.length })
+                }
+                const maxCost = Math.max(...days.map(d => d.cost), 1)
+                const totalWeekCost = days.reduce((s, d) => s + d.cost, 0)
+                return (
+                  <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                        <h3 className="text-sm font-semibold text-seed-fg">采购金额趋势</h3>
+                      </div>
+                      <span className="text-xs text-seed-muted">近 7 天合计 <strong className="text-seed-fg">¥{totalWeekCost.toLocaleString()}</strong></span>
+                    </div>
+                    <div className="flex items-end gap-2 h-36">
+                      {days.map((d, idx) => {
+                        const pct = d.cost / maxCost * 100
+                        const isToday = idx === days.length - 1
+                        return (
+                          <div key={d.key} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+                            <span className="text-[10px] text-seed-muted tabular-nums">¥{d.cost > 0 ? d.cost.toLocaleString() : ''}</span>
+                            <div className="w-full rounded-t-lg transition-all duration-500" style={{
+                              height: `${Math.max(pct, d.cost > 0 ? 8 : 2)}%`,
+                              background: isToday ? 'var(--color-seed-primary)' : `color-mix(in srgb, var(--color-seed-primary) ${40 + idx * 8}%, transparent)`,
+                              opacity: d.cost > 0 ? 1 : 0.15,
+                            }} />
+                            <span className={`text-[10px] ${isToday ? 'font-semibold text-seed-primary' : 'text-seed-muted'}`}>{d.label}</span>
+                            <span className="text-[9px] text-seed-muted">周{d.weekday}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* ── 本周新增明细 ── */}
+              {items.length > 0 && (() => {
+                const days = []
+                for (let d = 6; d >= 0; d--) {
+                  const date = new Date()
+                  date.setDate(date.getDate() - d)
+                  const key = date.toISOString().slice(0, 10)
+                  const label = `${date.getMonth() + 1}/${date.getDate()}`
+                  const dayItems = items.filter(i => i.date && i.date.slice(0, 10) === key)
+                  days.push({ key, label, count: dayItems.length, qty: dayItems.reduce((s, i) => s + i.quantity, 0) })
+                }
+                const maxCount = Math.max(...days.map(d => d.qty), 1)
+                const totalWeekQty = days.reduce((s, d) => s + d.qty, 0)
+                return (
+                  <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <ArrowUpRight className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                        <h3 className="text-sm font-semibold text-seed-fg">本周新增明细</h3>
+                      </div>
+                      <span className="text-xs text-seed-muted">7 天共新增 <strong className="text-seed-fg">{totalWeekQty} 件</strong></span>
+                    </div>
+                    <div className="flex items-end gap-2 h-28">
+                      {days.map((d, idx) => {
+                        const pct = d.qty / maxCount * 100
+                        const isToday = idx === days.length - 1
+                        return (
+                          <div key={d.key} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+                            <span className="text-[10px] text-seed-muted tabular-nums">{d.qty > 0 ? `${d.qty}件` : ''}</span>
+                            <div className="w-full rounded-t-lg transition-all duration-500" style={{
+                              height: `${Math.max(pct, d.qty > 0 ? 10 : 2)}%`,
+                              background: isToday ? 'var(--color-seed-accent, #e8915a)' : `color-mix(in srgb, var(--color-seed-accent, #e8915a) ${35 + idx * 9}%, transparent)`,
+                              opacity: d.qty > 0 ? 1 : 0.15,
+                            }} />
+                            <span className={`text-[10px] ${isToday ? 'font-semibold text-seed-fg' : 'text-seed-muted'}`}>{d.label}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
+
               {items.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                   <div className="w-16 h-16 rounded-2xl bg-cat-green-bg flex items-center justify-center mb-4">
