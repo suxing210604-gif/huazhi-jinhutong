@@ -57,6 +57,7 @@ const CATEGORY_COLORS = {
    ───────────────────────────────────────────────────────────────────── */
 export default function App(qoderProps) {
   const [items, setItems] = useState([])
+  const [pendingItems, setPendingItems] = useState([])
   const [dataLoaded, setDataLoaded] = useState(false)
   const [activeNav, setActiveNav] = useState('inventory')
   const [searchQuery, setSearchQuery] = useState('')
@@ -105,8 +106,11 @@ export default function App(qoderProps) {
   }, [])
 
   /* ── Derived data ─────────────────────────────────────────────────── */
+  const isPendingMode = pendingItems.length > 0
+  const displayItems = isPendingMode ? pendingItems : items
+
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    return displayItems.filter(item => {
       const matchSearch = !searchQuery ||
         item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.supplier.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -114,7 +118,7 @@ export default function App(qoderProps) {
       const matchCategory = categoryFilter === '全部' || item.category === categoryFilter
       return matchSearch && matchCategory
     })
-  }, [items, searchQuery, categoryFilter])
+  }, [displayItems, searchQuery, categoryFilter])
 
   const stats = useMemo(() => {
     const total = items.length
@@ -171,10 +175,9 @@ export default function App(qoderProps) {
         photo: photoUrl,
         date: new Date().toISOString().split('T')[0],
       }))
-      // 云端保存（自动去重：名称+供应商+日期相同则替换）
-      const updated = await db.upsertBatch(newItems)
-      setItems(updated)
-      showToast(`已识别 ${newItems.length} 件商品，请核对信息`, 'success')
+      // 暂存到待确认列表，等用户确认后再入库
+      setPendingItems(prev => [...prev, ...newItems])
+      showToast(`已识别 ${newItems.length} 件商品，请核对后确认入库`, 'success')
     } catch (err) {
       showToast(err.message || '识别失败，请重试', 'error')
     } finally {
@@ -206,11 +209,24 @@ export default function App(qoderProps) {
   const handleDragLeave = useCallback(() => setIsDragging(false), [])
 
   /* ── CRUD operations ──────────────────────────────────────────────── */
-  const confirmItems = useCallback(() => {
-    showToast('进货数据已确认入库', 'success')
-  }, [showToast])
+  const confirmItems = useCallback(async () => {
+    if (pendingItems.length === 0) return
+    // 批量入库（自动去重：名称相同则替换）
+    const updated = await db.upsertBatch(pendingItems)
+    setItems(updated)
+    setPendingItems([])
+    setSelectedIds(new Set())
+    showToast(`${pendingItems.length} 件商品已确认入库`, 'success')
+  }, [pendingItems, showToast])
 
   const removeItem = useCallback(async (id) => {
+    if (isPendingMode) {
+      setPendingItems(prev => prev.filter(i => i.id !== id))
+      setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n })
+      setDeleteConfirm(null)
+      showToast('已从清单中移除', 'success')
+      return
+    }
     const updated = await db.deleteItem(id)
     setItems(updated)
     setSelectedIds(prev => {
@@ -220,17 +236,26 @@ export default function App(qoderProps) {
     })
     setDeleteConfirm(null)
     showToast('已删除该条记录', 'success')
-  }, [showToast])
+  }, [isPendingMode, showToast])
 
   const removeSelectedItems = useCallback(async () => {
     const ids = [...selectedIds]
+    if (isPendingMode) {
+      const idSet = new Set(ids)
+      setPendingItems(prev => prev.filter(i => !idSet.has(i.id)))
+      const count = ids.length
+      setSelectedIds(new Set())
+      setDeleteConfirm(null)
+      showToast(`已从清单中移除 ${count} 条`, 'success')
+      return
+    }
     const updated = await db.deleteMany(ids)
     setItems(updated)
     const count = selectedIds.size
     setSelectedIds(new Set())
     setDeleteConfirm(null)
     showToast(`已删除 ${count} 条记录`, 'success')
-  }, [selectedIds, showToast])
+  }, [selectedIds, isPendingMode, showToast])
 
   const startEdit = useCallback((item) => {
     setEditingItem(item)
@@ -239,12 +264,19 @@ export default function App(qoderProps) {
   }, [])
 
   const saveEdit = useCallback(async () => {
+    if (isPendingMode) {
+      setPendingItems(prev => prev.map(i => i.id === editingItem.id ? { ...i, ...editForm } : i))
+      setShowEditModal(false)
+      setEditingItem(null)
+      showToast('信息已更新', 'success')
+      return
+    }
     const updated = await db.updateItem(editingItem.id, editForm)
     setItems(updated)
     setShowEditModal(false)
     setEditingItem(null)
     showToast('信息已更新', 'success')
-  }, [editingItem, editForm, showToast])
+  }, [editingItem, editForm, isPendingMode, showToast])
 
   const openAddModal = useCallback(() => {
     setAddForm({
@@ -959,19 +991,28 @@ export default function App(qoderProps) {
                     删除选中 ({selectedIds.size})
                   </button>
                 )}
-                {items.length > 0 && (
+                {pendingItems.length > 0 && (
                   <button
                     onClick={confirmItems}
                     className="btn-primary flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-medium"
                     style={{ background: 'var(--color-seed-primary)' }}
-                    aria-label="确认全部进货数据"
+                    aria-label={`确认入库 ${pendingItems.length} 件商品`}
                    data-qoder-id="qel-button-324f37d2" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-button-324f37d2&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;button&quot;,&quot;loc&quot;:{&quot;line&quot;:492,&quot;column&quot;:19}}">
                     <Check className="w-3.5 h-3.5" aria-hidden="true"  data-qoder-id="qel-w-3-5-e50f290c" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-w-3-5-e50f290c&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;w-3-5&quot;,&quot;loc&quot;:{&quot;line&quot;:498,&quot;column&quot;:21}}"/>
-                    确认入库
+                    确认入库 ({pendingItems.length})
                   </button>
                 )}
               </div>
             </div>
+
+            {/* Pending banner */}
+            {isPendingMode && (
+              <div className="mx-5 mb-3 flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm"
+                   style={{ background: 'var(--color-seed-primary-bg)', color: 'var(--color-seed-primary)', border: '1px solid var(--color-seed-primary-border)' }}>
+                <Check className="w-4 h-4 flex-shrink-0" />
+                <span>待确认清单 — 共 <strong>{pendingItems.length}</strong> 件商品，核对无误后点击「确认入库」</span>
+              </div>
+            )}
 
             {/* Table */}
             {filteredItems.length === 0 ? (
@@ -981,10 +1022,10 @@ export default function App(qoderProps) {
                   <ImageIcon className="w-7 h-7 text-seed-muted" aria-hidden="true"  data-qoder-id="qel-w-7-3c59eb9e" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-w-7-3c59eb9e&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;w-7&quot;,&quot;loc&quot;:{&quot;line&quot;:510,&quot;column&quot;:19}}"/>
                 </div>
                 <p className="text-sm font-medium text-seed-muted mb-1" data-qoder-id="qel-text-sm-cfe3a8c0" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-sm-cfe3a8c0&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-sm&quot;,&quot;loc&quot;:{&quot;line&quot;:512,&quot;column&quot;:17}}">
-                  {items.length === 0 ? '暂无进货记录' : '没有匹配的记录'}
+                  {isPendingMode ? '没有匹配的记录' : (items.length === 0 ? '暂无进货记录' : '没有匹配的记录')}
                 </p>
                 <p className="text-xs text-seed-muted" data-qoder-id="qel-text-xs-e3bc017e" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-xs-e3bc017e&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-xs&quot;,&quot;loc&quot;:{&quot;line&quot;:515,&quot;column&quot;:17}}">
-                  {items.length === 0 ? '上传商品图片开始录入' : '尝试调整搜索条件或分类筛选'}
+                  {isPendingMode ? '尝试调整搜索条件' : (items.length === 0 ? '上传商品图片开始录入' : '尝试调整搜索条件或分类筛选')}
                 </p>
               </div>
             ) : (
