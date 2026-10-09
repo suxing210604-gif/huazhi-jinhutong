@@ -38,9 +38,75 @@ const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 
 const isConfigured = SUPABASE_URL !== 'YOUR_PROJECT_URL' && SUPABASE_KEY !== 'YOUR_ANON_KEY'
 
+/* ── 云端连接探测（3 秒超时） ─────────────────────────────────────────── */
+
 let supabase = null
+let cloudChecked = false
+let cloudOk = false
+let cloudCheckPromise = null
+
 if (isConfigured) {
-  supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+  try {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+  } catch (e) {
+    console.warn('[Supabase] 客户端创建失败:', e)
+    supabase = null
+  }
+}
+
+/**
+ * 一次性云端连通性探测（3 秒超时）。
+ * 如果 Supabase 域名被墙或不可达，会自动将 supabase 置为 null，
+ * 后续所有 auth / db 调用将降级到 localStorage 本地模式。
+ */
+function probeCloud() {
+  if (cloudCheckPromise) return cloudCheckPromise
+
+  cloudCheckPromise = (async () => {
+    if (!supabase || cloudChecked) return cloudOk
+
+    try {
+      const ctrl = new AbortController()
+      const tid = setTimeout(() => ctrl.abort(), 3000)
+
+      await fetch(`${SUPABASE_URL}/rest/v1/`, {
+        headers: { 'apikey': SUPABASE_KEY },
+        signal: ctrl.signal,
+      })
+      clearTimeout(tid)
+      cloudOk = true
+    } catch {
+      // 云端不可达 → 永久降级到本地模式（本次会话内）
+      supabase = null
+      cloudOk = false
+    }
+
+    cloudChecked = true
+    return cloudOk
+  })()
+
+  return cloudCheckPromise
+}
+
+/* ── 本地用户管理（离线模式） ─────────────────────────────────────────── */
+
+const LOCAL_USER_KEY = 'huazhi_local_user'
+
+function getLocalUser() {
+  try {
+    const saved = localStorage.getItem(LOCAL_USER_KEY)
+    if (saved) return JSON.parse(saved)
+    const id = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
+    const user = { id, phone: '' }
+    localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(user))
+    return user
+  } catch {
+    return { id: 'guest', phone: '' }
+  }
+}
+
+function clearLocalUser() {
+  try { localStorage.removeItem(LOCAL_USER_KEY) } catch { /* noop */ }
 }
 
 /* ── 认证服务 ─────────────────────────────────────────────────────────── */
@@ -53,7 +119,13 @@ function phoneToEmail(phone) {
 export const auth = {
   /** 注册新账号（手机号 + 密码） */
   async signUp(phone, password) {
-    if (!supabase) throw new Error('未配置云数据库')
+    if (!await probeCloud()) {
+      // 离线模式：直接创建本地用户并自动登录
+      const user = getLocalUser()
+      user.phone = phone
+      try { localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(user)) } catch { /* noop */ }
+      return { user: { id: user.id, email: `${phone}@huazhi.user` }, session: { user: { id: user.id } } }
+    }
     const email = phoneToEmail(phone)
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -66,7 +138,11 @@ export const auth = {
 
   /** 登录（手机号 + 密码） */
   async signIn(phone, password) {
-    if (!supabase) throw new Error('未配置云数据库')
+    if (!await probeCloud()) {
+      // 离线模式：直接以本地用户身份登录
+      const user = getLocalUser()
+      return { user: { id: user.id, email: `${phone}@huazhi.user` }, session: { user: { id: user.id } } }
+    }
     const email = phoneToEmail(phone)
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
@@ -75,22 +151,36 @@ export const auth = {
 
   /** 退出登录 */
   async signOut() {
-    if (!supabase) return
+    if (!await probeCloud()) {
+      clearLocalUser()
+      return
+    }
     const { error } = await supabase.auth.signOut()
     if (error) throw error
   },
 
   /** 获取当前会话 */
   async getSession() {
-    if (!supabase) return null
+    if (!await probeCloud()) {
+      // 离线模式：返回本地用户会话
+      const user = getLocalUser()
+      return { user: { id: user.id } }
+    }
     const { data: { session } } = await supabase.auth.getSession()
     return session
   },
 
   /** 监听认证状态变化 */
   onAuthStateChange(callback) {
-    if (!supabase) return () => {}
+    if (!supabase) {
+      // 离线模式：立即触发一次 INITIAL_SESSION，返回兼容结构
+      const user = getLocalUser()
+      setTimeout(() => callback('INITIAL_SESSION', { user: { id: user.id } }), 0)
+      return { data: { subscription: { unsubscribe: () => {} } } }
+    }
     return supabase.auth.onAuthStateChange((event, session) => {
+      // 如果云端已确认不可用，忽略来自 Supabase 的延迟回调
+      if (cloudChecked && !cloudOk) return
       callback(event, session)
     })
   },
@@ -140,7 +230,7 @@ function itemToRow(item, userId) {
   }
 }
 
-/* ── localStorage 降级方案（未配置 Supabase 时使用） ──────────────────── */
+/* ── localStorage 降级方案（云端不可用时使用） ────────────────────────── */
 
 const LS_KEY_PREFIX = 'huazhi_items_'
 
@@ -195,9 +285,6 @@ const localDB = {
 /* ── 统一数据服务（自动选择云端 / 本地） ─────────────────────────────── */
 
 export const db = {
-  /** 是否已配置云数据库 */
-  isCloud: isConfigured,
-
   /** 加载当前用户的全部记录 */
   async loadItems(userId) {
     if (!supabase) return localDB.getAll(userId)

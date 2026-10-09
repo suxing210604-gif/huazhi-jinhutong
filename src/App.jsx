@@ -115,7 +115,7 @@ export default function App(qoderProps) {
         setDataLoaded(false)
       }
     })
-    return () => subscription.unsubscribe()
+    return () => subscription?.unsubscribe?.()
   }, [])
 
   /* ── Auto-hide toast ──────────────────────────────────────────────── */
