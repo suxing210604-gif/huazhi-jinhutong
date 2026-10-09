@@ -11,6 +11,7 @@ import { createClient } from '@supabase/supabase-js'
 
    CREATE TABLE IF NOT EXISTS huazhi_items (
      id         BIGSERIAL PRIMARY KEY,
+     user_id    TEXT NOT NULL DEFAULT '',
      name       TEXT NOT NULL DEFAULT '',
      category   TEXT NOT NULL DEFAULT '绿植',
      spec       TEXT NOT NULL DEFAULT '',
@@ -24,6 +25,9 @@ import { createClient } from '@supabase/supabase-js'
      date       TEXT NOT NULL DEFAULT '',
      created_at TIMESTAMPTZ DEFAULT NOW()
    );
+
+   -- 添加 user_id 列（如果表已存在）
+   ALTER TABLE huazhi_items ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT '';
 
    5. 在 Authentication → Policies 中确保 huazhi_items 表允许 anon 角色的
       SELECT / INSERT / UPDATE / DELETE 操作（或使用 Row Level Security 策略）
@@ -39,12 +43,71 @@ if (isConfigured) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 }
 
+/* ── 认证服务 ─────────────────────────────────────────────────────────── */
+
+/** 将手机号转换为 Supabase 内部 email 格式（避免短信验证） */
+function phoneToEmail(phone) {
+  return `${phone}@huazhi.user`
+}
+
+export const auth = {
+  /** 注册新账号（手机号 + 密码） */
+  async signUp(phone, password) {
+    if (!supabase) throw new Error('未配置云数据库')
+    const email = phoneToEmail(phone)
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { phone } }
+    })
+    if (error) throw error
+    return data
+  },
+
+  /** 登录（手机号 + 密码） */
+  async signIn(phone, password) {
+    if (!supabase) throw new Error('未配置云数据库')
+    const email = phoneToEmail(phone)
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw error
+    return data
+  },
+
+  /** 退出登录 */
+  async signOut() {
+    if (!supabase) return
+    const { error } = await supabase.auth.signOut()
+    if (error) throw error
+  },
+
+  /** 获取当前会话 */
+  async getSession() {
+    if (!supabase) return null
+    const { data: { session } } = await supabase.auth.getSession()
+    return session
+  },
+
+  /** 监听认证状态变化 */
+  onAuthStateChange(callback) {
+    if (!supabase) return () => {}
+    return supabase.auth.onAuthStateChange((event, session) => {
+      callback(event, session)
+    })
+  },
+
+  /** 获取当前用户 ID */
+  getUserId(session) {
+    return session?.user?.id || null
+  },
+}
+
 /* ── 工具函数 ─────────────────────────────────────────────────────────── */
 
 /** 将数据库行转换为应用内部 item 格式 */
 function rowToItem(row) {
   return {
     id:       row.id,
+    user_id:  row.user_id || '',
     name:     row.name     || '',
     category: row.category || '绿植',
     spec:     row.spec     || '',
@@ -59,9 +122,10 @@ function rowToItem(row) {
   }
 }
 
-/** 从 item 中提取写入数据库的字段（不含 id） */
-function itemToRow(item) {
+/** 从 item 中提取写入数据库的字段（不含 id），包含 user_id */
+function itemToRow(item, userId) {
   return {
+    user_id: userId || item.user_id || '',
     name:     item.name     || '',
     category: item.category || '绿植',
     spec:     item.spec     || '',
@@ -78,17 +142,21 @@ function itemToRow(item) {
 
 /* ── localStorage 降级方案（未配置 Supabase 时使用） ──────────────────── */
 
-const LS_KEY = 'huazhi_items'
+const LS_KEY_PREFIX = 'huazhi_items_'
+
+function getLsKey(userId) {
+  return userId ? `${LS_KEY_PREFIX}${userId}` : 'huazhi_items_guest'
+}
 
 const localDB = {
-  async getAll() {
+  async getAll(userId) {
     try {
-      const saved = localStorage.getItem(LS_KEY)
+      const saved = localStorage.getItem(getLsKey(userId))
       return saved ? JSON.parse(saved) : []
     } catch { return [] }
   },
-  async upsert(item) {
-    const all = await this.getAll()
+  async upsert(item, userId) {
+    const all = await this.getAll(userId)
     const idx = all.findIndex(i => i.name === item.name)
     if (idx >= 0) {
       all[idx] = { ...all[idx], ...item }
@@ -96,30 +164,30 @@ const localDB = {
       const newId = all.length ? Math.max(...all.map(i => i.id)) + 1 : 1
       all.unshift({ ...item, id: newId })
     }
-    localStorage.setItem(LS_KEY, JSON.stringify(all))
+    localStorage.setItem(getLsKey(userId), JSON.stringify(all))
     return all
   },
-  async update(id, updates) {
-    const all = await this.getAll()
+  async update(id, updates, userId) {
+    const all = await this.getAll(userId)
     const updated = all.map(i => i.id === id ? { ...i, ...updates } : i)
-    localStorage.setItem(LS_KEY, JSON.stringify(updated))
+    localStorage.setItem(getLsKey(userId), JSON.stringify(updated))
     return updated
   },
-  async delete(id) {
-    const all = await this.getAll()
+  async delete(id, userId) {
+    const all = await this.getAll(userId)
     const filtered = all.filter(i => i.id !== id)
-    localStorage.setItem(LS_KEY, JSON.stringify(filtered))
+    localStorage.setItem(getLsKey(userId), JSON.stringify(filtered))
     return filtered
   },
-  async deleteMany(ids) {
+  async deleteMany(ids, userId) {
     const idSet = new Set(ids)
-    const all = await this.getAll()
+    const all = await this.getAll(userId)
     const filtered = all.filter(i => !idSet.has(i.id))
-    localStorage.setItem(LS_KEY, JSON.stringify(filtered))
+    localStorage.setItem(getLsKey(userId), JSON.stringify(filtered))
     return filtered
   },
-  async clear() {
-    localStorage.removeItem(LS_KEY)
+  async clear(userId) {
+    localStorage.removeItem(getLsKey(userId))
     return []
   },
 }
@@ -130,56 +198,60 @@ export const db = {
   /** 是否已配置云数据库 */
   isCloud: isConfigured,
 
-  /** 加载全部记录 */
-  async loadItems() {
-    if (!supabase) return localDB.getAll()
-    const { data, error } = await supabase
+  /** 加载当前用户的全部记录 */
+  async loadItems(userId) {
+    if (!supabase) return localDB.getAll(userId)
+    let query = supabase
       .from('huazhi_items')
       .select('*')
       .order('created_at', { ascending: false })
+    if (userId) query = query.eq('user_id', userId)
+    const { data, error } = await query
     if (error) { console.error('loadItems error:', error); return [] }
     return (data || []).map(rowToItem)
   },
 
   /**
-   * 新增或替换：按 名称 判断重复
+   * 新增或替换：按 名称 判断重复（仅在当前用户范围内）
    * - 重复 → 替换旧记录（更新）
    * - 不重复 → 新增
    * 返回更新后的完整列表
    */
-  async upsertItem(item) {
-    if (!supabase) return localDB.upsert(item)
+  async upsertItem(item, userId) {
+    if (!supabase) return localDB.upsert(item, userId)
 
-    // 检查是否已存在相同名称的记录
-    const { data: existing } = await supabase
+    // 检查是否已存在相同名称的记录（仅限当前用户）
+    let existQuery = supabase
       .from('huazhi_items')
       .select('id')
       .eq('name', item.name || '')
       .limit(1)
+    if (userId) existQuery = existQuery.eq('user_id', userId)
+    const { data: existing } = await existQuery
 
     if (existing && existing.length > 0) {
       // 重复 → 替换
       const { error } = await supabase
         .from('huazhi_items')
-        .update(itemToRow(item))
+        .update(itemToRow(item, userId))
         .eq('id', existing[0].id)
       if (error) console.error('upsert(update) error:', error)
     } else {
       // 不重复 → 新增
       const { error } = await supabase
         .from('huazhi_items')
-        .insert([itemToRow(item)])
+        .insert([itemToRow(item, userId)])
       if (error) console.error('upsert(insert) error:', error)
     }
 
     // 返回最新列表
-    return this.loadItems()
+    return this.loadItems(userId)
   },
 
-  /** 批量新增（AI 识别后），自动去重 */
-  async upsertBatch(newItems) {
+  /** 批量新增（AI 识别后），自动去重（仅当前用户范围） */
+  async upsertBatch(newItems, userId) {
     if (!supabase) {
-      let all = await localDB.getAll()
+      let all = await localDB.getAll(userId)
       for (const item of newItems) {
         const idx = all.findIndex(i => i.name === item.name)
         if (idx >= 0) {
@@ -189,57 +261,61 @@ export const db = {
           all.unshift({ ...item, id: newId })
         }
       }
-      localStorage.setItem(LS_KEY, JSON.stringify(all))
+      localStorage.setItem(getLsKey(userId), JSON.stringify(all))
       return all
     }
 
     for (const item of newItems) {
-      const { data: existing } = await supabase
+      let existQuery = supabase
         .from('huazhi_items')
         .select('id')
         .eq('name', item.name || '')
         .limit(1)
+      if (userId) existQuery = existQuery.eq('user_id', userId)
+      const { data: existing } = await existQuery
 
       if (existing && existing.length > 0) {
-        await supabase.from('huazhi_items').update(itemToRow(item)).eq('id', existing[0].id)
+        await supabase.from('huazhi_items').update(itemToRow(item, userId)).eq('id', existing[0].id)
       } else {
-        await supabase.from('huazhi_items').insert([itemToRow(item)])
+        await supabase.from('huazhi_items').insert([itemToRow(item, userId)])
       }
     }
-    return this.loadItems()
+    return this.loadItems(userId)
   },
 
   /** 更新单条记录 */
-  async updateItem(id, updates) {
-    if (!supabase) return localDB.update(id, updates)
+  async updateItem(id, updates, userId) {
+    if (!supabase) return localDB.update(id, updates, userId)
     const { error } = await supabase
       .from('huazhi_items')
-      .update(itemToRow(updates))
+      .update(itemToRow(updates, userId))
       .eq('id', id)
     if (error) console.error('updateItem error:', error)
-    return this.loadItems()
+    return this.loadItems(userId)
   },
 
   /** 删除单条记录 */
-  async deleteItem(id) {
-    if (!supabase) return localDB.delete(id)
+  async deleteItem(id, userId) {
+    if (!supabase) return localDB.delete(id, userId)
     const { error } = await supabase.from('huazhi_items').delete().eq('id', id)
     if (error) console.error('deleteItem error:', error)
-    return this.loadItems()
+    return this.loadItems(userId)
   },
 
   /** 批量删除 */
-  async deleteMany(ids) {
-    if (!supabase) return localDB.deleteMany(ids)
+  async deleteMany(ids, userId) {
+    if (!supabase) return localDB.deleteMany(ids, userId)
     const { error } = await supabase.from('huazhi_items').delete().in('id', [...ids])
     if (error) console.error('deleteMany error:', error)
-    return this.loadItems()
+    return this.loadItems(userId)
   },
 
-  /** 清空全部数据 */
-  async clearAll() {
-    if (!supabase) return localDB.clear()
-    const { error } = await supabase.from('huazhi_items').delete().neq('id', 0)
+  /** 清空当前用户的全部数据 */
+  async clearAll(userId) {
+    if (!supabase) return localDB.clear(userId)
+    let query = supabase.from('huazhi_items').delete().neq('id', 0)
+    if (userId) query = query.eq('user_id', userId)
+    const { error } = await query
     if (error) console.error('clearAll error:', error)
     return []
   },

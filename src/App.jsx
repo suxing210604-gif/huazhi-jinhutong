@@ -4,11 +4,11 @@ import {
   Package, TrendingUp, Trash2, Edit3, ChevronDown, ChevronLeft, ChevronRight,
   Image as ImageIcon, FileSpreadsheet, FileText, Check, X, Sparkles,
   LayoutDashboard, ClipboardList, Settings, BarChart3, Plus, ArrowUpRight,
-  AlertCircle, Clock, Database, Truck
+  AlertCircle, Clock, Database, Truck, Lock, User, LogOut
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { recognizeImage, AI_PROVIDERS, fileToBase64 } from './lib/openai-api'
-import { db } from './lib/supabase'
+import { db, auth } from './lib/supabase'
 
 /* ─────────────────────────────────────────────────────────────────────
    Product catalog for AI recognition simulation
@@ -90,6 +90,34 @@ export default function App(qoderProps) {
   const fileInputRef = useRef(null)
   const nextId = useRef(1)
 
+  /* ── Auth state ────────────────────────────────────────────────────── */
+  const [session, setSession] = useState(null)
+  const [userId, setUserId] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authMode, setAuthMode] = useState('login') // 'login' | 'register'
+  const [loginForm, setLoginForm] = useState({ phone: '', password: '', confirmPassword: '' })
+  const [loginError, setLoginError] = useState('')
+
+  /* ── Initialize auth state on mount ────────────────────────────────── */
+  useEffect(() => {
+    // Get initial session
+    auth.getSession().then((s) => {
+      setSession(s)
+      setUserId(auth.getUserId(s))
+      setAuthLoading(false)
+    })
+    // Listen for auth changes
+    const { data: { subscription } } = auth.onAuthStateChange((event, s) => {
+      setSession(s)
+      setUserId(auth.getUserId(s))
+      if (event === 'SIGNED_OUT') {
+        setItems([])
+        setDataLoaded(false)
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
   /* ── Auto-hide toast ──────────────────────────────────────────────── */
   useEffect(() => {
     if (!toast) return
@@ -97,17 +125,83 @@ export default function App(qoderProps) {
     return () => clearTimeout(timer)
   }, [toast])
 
-  /* ── Load data from cloud database on mount ────────────────────────── */
+  /* ── Load data from cloud database when user is logged in ──────────── */
   useEffect(() => {
+    if (authLoading) return
+    if (!userId) {
+      setDataLoaded(true) // mark as loaded so UI can show login screen
+      return
+    }
     (async () => {
-      const loaded = await db.loadItems()
+      const loaded = await db.loadItems(userId)
       setItems(loaded)
       if (loaded.length > 0) {
         nextId.current = Math.max(...loaded.map(i => i.id)) + 1
       }
       setDataLoaded(true)
     })()
-  }, [])
+  }, [userId, authLoading])
+
+  /* ── Auth handlers ─────────────────────────────────────────────────── */
+  const handleLogin = useCallback(async () => {
+    setLoginError('')
+    const { phone, password } = loginForm
+    if (!phone.trim()) { setLoginError('请输入手机号'); return }
+    if (!/^1\d{10}$/.test(phone.trim())) { setLoginError('手机号格式不正确'); return }
+    if (!password) { setLoginError('请输入密码'); return }
+    setAuthLoading(true)
+    try {
+      await auth.signIn(phone.trim(), password)
+      setLoginForm({ phone: '', password: '', confirmPassword: '' })
+      showToast('登录成功', 'success')
+    } catch (err) {
+      const msg = err.message || ''
+      if (msg.includes('Invalid login credentials') || msg.includes('invalid_grant')) {
+        setLoginError('手机号或密码错误')
+      } else {
+        setLoginError(msg || '登录失败，请重试')
+      }
+    } finally {
+      setAuthLoading(false)
+    }
+  }, [loginForm, showToast])
+
+  const handleRegister = useCallback(async () => {
+    setLoginError('')
+    const { phone, password, confirmPassword } = loginForm
+    if (!phone.trim()) { setLoginError('请输入手机号'); return }
+    if (!/^1\d{10}$/.test(phone.trim())) { setLoginError('手机号格式不正确'); return }
+    if (!password) { setLoginError('请设置密码'); return }
+    if (password.length < 6) { setLoginError('密码至少 6 位'); return }
+    if (password !== confirmPassword) { setLoginError('两次密码不一致'); return }
+    setAuthLoading(true)
+    try {
+      await auth.signUp(phone.trim(), password)
+      setLoginForm({ phone: '', password: '', confirmPassword: '' })
+      showToast('注册成功，已自动登录', 'success')
+    } catch (err) {
+      const msg = err.message || ''
+      if (msg.includes('already registered') || msg.includes('already been registered')) {
+        setLoginError('该手机号已注册，请直接登录')
+      } else {
+        setLoginError(msg || '注册失败，请重试')
+      }
+    } finally {
+      setAuthLoading(false)
+    }
+  }, [loginForm, showToast])
+
+  const handleLogout = useCallback(async () => {
+    await auth.signOut()
+    setItems([])
+    setDataLoaded(false)
+    setSession(null)
+    setUserId(null)
+    setAuthMode('login')
+    setLoginForm({ phone: '', password: '', confirmPassword: '' })
+    setLoginError('')
+    showToast('已退出登录', 'success')
+  }, [showToast])
 
   /* ── Derived data ─────────────────────────────────────────────────── */
   const isPendingMode = pendingItems.length > 0
@@ -217,7 +311,7 @@ export default function App(qoderProps) {
     if (pendingItems.length === 0) return
     const count = pendingItems.length
     // 批量入库（自动去重：名称相同则替换）
-    await db.upsertBatch(pendingItems)
+    await db.upsertBatch(pendingItems, userId)
     // 入库完成，清空待确认清单和显示列表（数据已存入数据库，不会丢失）
     setPendingItems([])
     setItems([])
@@ -233,7 +327,7 @@ export default function App(qoderProps) {
       showToast('已从清单中移除', 'success')
       return
     }
-    const updated = await db.deleteItem(id)
+    const updated = await db.deleteItem(id, userId)
     setItems(updated)
     setSelectedIds(prev => {
       const next = new Set(prev)
@@ -255,7 +349,7 @@ export default function App(qoderProps) {
       showToast(`已从清单中移除 ${count} 条`, 'success')
       return
     }
-    const updated = await db.deleteMany(ids)
+    const updated = await db.deleteMany(ids, userId)
     setItems(updated)
     const count = selectedIds.size
     setSelectedIds(new Set())
@@ -277,7 +371,7 @@ export default function App(qoderProps) {
       showToast('信息已更新', 'success')
       return
     }
-    const updated = await db.updateItem(editingItem.id, editForm)
+    const updated = await db.updateItem(editingItem.id, editForm, userId)
     setItems(updated)
     setShowEditModal(false)
     setEditingItem(null)
@@ -313,7 +407,7 @@ export default function App(qoderProps) {
       date: addForm.date || new Date().toISOString().split('T')[0],
     }
     // 云端保存（自动去重：名称+供应商+日期相同则替换）
-    const updated = await db.upsertItem(newItem)
+    const updated = await db.upsertItem(newItem, userId)
     setItems(updated)
     setShowAddModal(false)
     showToast('已添加新商品', 'success')
@@ -425,6 +519,158 @@ export default function App(qoderProps) {
   /* ────────────────────────────────────────────────────────────────────
      RENDER
      ──────────────────────────────────────────────────────────────────── */
+
+  /* ── Loading state ─────────────────────────────────────────────────── */
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center" style={{ background: 'var(--color-seed-bg)' }}>
+        <div className="text-center">
+          <div className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--color-seed-accent), var(--color-seed-accent2))' }}>
+            <Leaf className="w-6 h-6 text-white animate-pulse" />
+          </div>
+          <p className="text-sm text-seed-muted">加载中...</p>
+        </div>
+      </div>
+    )
+  }
+
+  /* ── Login / Register screen ───────────────────────────────────────── */
+  if (!userId) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4" style={{ background: 'var(--color-seed-bg)' }}>
+        <div className="w-full max-w-[400px]">
+          {/* Logo */}
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--color-seed-accent), var(--color-seed-accent2))' }}>
+              <Leaf className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold" style={{ color: 'var(--color-seed-fg)' }}>花植进货通</h1>
+            <p className="text-sm mt-1" style={{ color: 'var(--color-seed-muted)' }}>Smart Procurement</p>
+          </div>
+
+          {/* Card */}
+          <div className="rounded-2xl p-6 shadow-lg" style={{ background: 'var(--color-seed-card)', border: '1px solid var(--color-seed-border)' }}>
+            {/* Tab switcher */}
+            <div className="flex mb-6 rounded-xl p-1" style={{ background: 'var(--color-neutral-50)' }}>
+              <button
+                onClick={() => { setAuthMode('login'); setLoginError('') }}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${authMode === 'login' ? 'shadow-sm' : ''}`}
+                style={{
+                  background: authMode === 'login' ? 'var(--color-seed-card)' : 'transparent',
+                  color: authMode === 'login' ? 'var(--color-seed-fg)' : 'var(--color-seed-muted)',
+                }}
+              >
+                登录
+              </button>
+              <button
+                onClick={() => { setAuthMode('register'); setLoginError('') }}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${authMode === 'register' ? 'shadow-sm' : ''}`}
+                style={{
+                  background: authMode === 'register' ? 'var(--color-seed-card)' : 'transparent',
+                  color: authMode === 'register' ? 'var(--color-seed-fg)' : 'var(--color-seed-muted)',
+                }}
+              >
+                注册
+              </button>
+            </div>
+
+            {/* Form */}
+            <div className="space-y-4">
+              {/* Phone */}
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-seed-muted)' }}>手机号</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--color-seed-muted)' }} />
+                  <input
+                    type="tel"
+                    placeholder="请输入手机号"
+                    value={loginForm.phone}
+                    onChange={e => setLoginForm(prev => ({ ...prev, phone: e.target.value.replace(/\D/g, '').slice(0, 11) }))}
+                    onKeyDown={e => { if (e.key === 'Enter') authMode === 'login' ? handleLogin() : handleRegister() }}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-seed-primary/20"
+                    style={{ background: 'var(--color-neutral-50)', border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}
+                    maxLength={11}
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-seed-muted)' }}>密码</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--color-seed-muted)' }} />
+                  <input
+                    type="password"
+                    placeholder={authMode === 'login' ? '请输入密码' : '请设置密码（至少6位）'}
+                    value={loginForm.password}
+                    onChange={e => setLoginForm(prev => ({ ...prev, password: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') authMode === 'login' ? handleLogin() : handleRegister() }}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-seed-primary/20"
+                    style={{ background: 'var(--color-neutral-50)', border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}
+                  />
+                </div>
+              </div>
+
+              {/* Confirm password (register only) */}
+              {authMode === 'register' && (
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-seed-muted)' }}>确认密码</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--color-seed-muted)' }} />
+                    <input
+                      type="password"
+                      placeholder="请再次输入密码"
+                      value={loginForm.confirmPassword}
+                      onChange={e => setLoginForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') handleRegister() }}
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-seed-primary/20"
+                      style={{ background: 'var(--color-neutral-50)', border: '1px solid var(--color-seed-border)', color: 'var(--color-seed-fg)' }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {loginError && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs" style={{ background: 'var(--color-danger-bg)', color: 'var(--color-seed-danger)' }}>
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  {loginError}
+                </div>
+              )}
+
+              {/* Submit */}
+              <button
+                onClick={authMode === 'login' ? handleLogin : handleRegister}
+                disabled={authLoading}
+                className="w-full py-2.5 rounded-xl text-white text-sm font-medium transition-opacity disabled:opacity-50"
+                style={{ background: 'var(--color-seed-primary)' }}
+              >
+                {authLoading ? '处理中...' : (authMode === 'login' ? '登录' : '注册')}
+              </button>
+            </div>
+
+            {/* Footer hint */}
+            <p className="text-xs text-center mt-4" style={{ color: 'var(--color-seed-muted)' }}>
+              {authMode === 'login' ? '还没有账号？' : '已有账号？'}
+              <button
+                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setLoginError('') }}
+                className="ml-1 font-medium"
+                style={{ color: 'var(--color-seed-primary)' }}
+              >
+                {authMode === 'login' ? '立即注册' : '去登录'}
+              </button>
+            </p>
+          </div>
+
+          <p className="text-xs text-center mt-6" style={{ color: 'var(--color-seed-muted)', opacity: 0.6 }}>
+            数据存储在云端，各账号数据相互独立
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  /* ── Main app (logged in) ──────────────────────────────────────────── */
   return (
     <div className={["flex min-h-screen", qoderProps?.className].filter(Boolean).join(" ")} style={qoderProps?.style} data-qoder-id={qoderProps?.["data-qoder-id"]} data-qoder-source={qoderProps?.["data-qoder-source"]}>
       {/* ── Sidebar ──────────────────────────────────────────────────── */}
@@ -472,6 +718,22 @@ export default function App(qoderProps) {
             <p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-seed-sidebar-text)', opacity: 0.7 }} data-qoder-id="qel-text-11px-8eeab725" data-qoder-source="{&quot;qoderId&quot;:&quot;qel-text-11px-8eeab725&quot;,&quot;filePath&quot;:&quot;react-vite/src/App.jsx&quot;,&quot;componentName&quot;:&quot;App&quot;,&quot;elementRole&quot;:&quot;text-11px&quot;,&quot;loc&quot;:{&quot;line&quot;:292,&quot;column&quot;:13}}">
               拍照即可自动识别花卉品种、规格与价格信息
             </p>
+          </div>
+
+          {/* User info & logout */}
+          <div className="mt-3 flex items-center gap-2 px-1">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-white font-medium truncate">
+                {session?.user?.user_metadata?.phone || session?.user?.email?.split('@')[0] || '用户'}
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-white/10"
+              title="退出登录"
+            >
+              <LogOut className="w-4 h-4" style={{ color: 'var(--color-seed-sidebar-text)', opacity: 0.7 }} />
+            </button>
           </div>
         </div>
       </aside>
@@ -1156,7 +1418,7 @@ export default function App(qoderProps) {
                     <button
                       onClick={async () => {
                         if (window.confirm('确定要清除所有数据吗？此操作不可恢复。')) {
-                          await db.clearAll()
+                          await db.clearAll(userId)
                           setItems([])
                           showToast('数据已清除', 'success')
                         }
@@ -1165,6 +1427,38 @@ export default function App(qoderProps) {
                       style={{ border: '1px solid var(--color-cat-rose-bg2)' }}
                     >
                       清除
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Account */}
+              <div className="glass-card-solid rounded-2xl p-4 sm:p-5 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <User className="w-4 h-4 text-seed-muted" aria-hidden="true"/>
+                  <h3 className="text-sm font-semibold text-seed-fg">账号</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium text-seed-fg">当前账号</p>
+                      <p className="text-[11px] text-seed-muted">
+                        {session?.user?.user_metadata?.phone || session?.user?.email?.split('@')[0] || '未登录'}
+                      </p>
+                    </div>
+                    <span className="text-xs px-2 py-1 rounded-lg bg-cat-green-bg text-cat-green">已登录</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium text-seed-fg">退出登录</p>
+                      <p className="text-[11px] text-seed-muted">退出后需重新登录</p>
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-500 transition-colors hover:bg-red-50"
+                      style={{ border: '1px solid var(--color-cat-rose-bg2)' }}
+                    >
+                      退出
                     </button>
                   </div>
                 </div>
@@ -1464,7 +1758,7 @@ export default function App(qoderProps) {
                                 value={inlineNotesValue}
                                 onChange={e => setInlineNotesValue(e.target.value)}
                                 onBlur={async () => {
-                                  const updated = await db.updateItem(item.id, { notes: inlineNotesValue })
+                                  const updated = await db.updateItem(item.id, { notes: inlineNotesValue }, userId)
                                   setItems(updated)
                                   setEditingNotesId(null)
                                 }}

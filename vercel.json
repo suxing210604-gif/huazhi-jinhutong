@@ -1,0 +1,7 @@
+{
+  "protection": {
+    "deployment": {
+      "enabled": false
+    }
+  }
+}
