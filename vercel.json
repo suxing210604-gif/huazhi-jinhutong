@@ -1,7 +1,5 @@
 {
-  "protection": {
-    "deployment": {
-      "enabled": false
-    }
-  }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
